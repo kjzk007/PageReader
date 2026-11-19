@@ -15,3 +15,9 @@ x86/
 *.[Cc]ache
 # but keep track of directories ending in .cache
 !*.[Cc]ache/
+
+# WebView2 SDK 的加载器库必须随仓库提供 —— 不然别人 clone 下来无法构建桌面端。
+# 上面的 `x64/` 是 Flutter 模板用来忽略构建产物的，会顺带忽略这里，所以显式取消。
+!webview2/x64/
+!webview2/x64/WebView2Loader.dll
+!webview2/x64/WebView2Loader.dll.lib
