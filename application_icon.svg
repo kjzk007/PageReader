@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 532 459" width="532" height="459">
+  <defs>
+    <!-- 金色金属渐变边框 -->
+    <linearGradient id="goldBorder" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#D4BC94" />
+      <stop offset="30%" stop-color="#F2DFB9" />
+      <stop offset="55%" stop-color="#B09367" />
+      <stop offset="80%" stop-color="#E5CFA7" />
+      <stop offset="100%" stop-color="#9A7E54" />
+    </linearGradient>
+
+    <!-- 深炭黑主填充渐变 -->
+    <linearGradient id="darkFill" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#222328" />
+      <stop offset="50%" stop-color="#1D1E22" />
+      <stop offset="100%" stop-color="#25262B" />
+    </linearGradient>
+
+    <style>
+      .gold-frame {
+        fill: url(#goldBorder);
+        stroke: #2A2520;
+        stroke-width: 1.5;
+        stroke-linejoin: miter;
+        stroke-miterlimit: 10;
+      }
+      .inner-dark {
+        fill: url(#darkFill);
+        stroke: #4A3E2D;
+        stroke-width: 0.8;
+      }
+    </style>
+  </defs>
+
+  <!-- ==================== 字母 P ==================== -->
+  <path class="gold-frame" fill-rule="evenodd" d="
+    M 81,160
+    L 210,160
+    C 256,160 278,186 278,223
+    C 278,261 255,286 208,286
+    L 144,286
+    L 144,324
+    L 153,337
+    L 84,337
+    L 100,322
+    L 100,178
+    Z
+
+    M 143,196
+    L 143,249
+    L 204,249
+    C 226,249 235,238 235,222.5
+    C 235,207 226,196 204,196
+    Z
+  " />
+
+  <path class="inner-dark" fill-rule="evenodd" d="
+    M 92,165
+    L 209,165
+    C 251,165 272,188 272,223
+    C 272,258 250,281 207,281
+    L 139,281
+    L 139,326
+    L 145,332
+    L 95,332
+    L 105,323
+    L 105,176
+    Z
+
+    M 138,191
+    L 138,254
+    L 205,254
+    C 230,254 241,241 241,222.5
+    C 241,204 230,191 205,191
+    Z
+  " />
+
+  <!-- ==================== 字母 R (上半部分及右斜腿) ==================== -->
+  <path class="gold-frame" fill-rule="evenodd" d="
+    M 258,160
+    L 358,160
+    C 402,160 424,185 424,221
+    C 424,255 405,278 369,283
+    L 429,337
+    L 369,337
+    L 291,264
+    L 291,250
+    L 354,250
+    C 374,250 383,239 383,223
+    C 383,207 374,196 354,196
+    L 285,196
+    C 280,183 271,170 258,160
+    Z
+  " />
+
+  <path class="inner-dark" fill-rule="evenodd" d="
+    M 269,165
+    L 357,165
+    C 397,165 418,187 418,221
+    C 418,253 398,274 360,278
+    L 418,332
+    L 372,332
+    L 297,261
+    L 297,255
+    L 355,255
+    C 378,255 389,242 389,223
+    C 389,204 378,191 355,191
+    L 289,191
+    C 284,180 277,171 269,165
+    Z
+  " />
+
+  <!-- ==================== 字母 R (左下独立竖腿) ==================== -->
+  <path class="gold-frame" d="
+    M 288,252
+    L 288,337
+    L 248,337
+    L 248,292
+    C 265,283 278,270 288,252
+    Z
+  " />
+
+  <path class="inner-dark" d="
+    M 283,265
+    L 283,332
+    L 253,332
+    L 253,295
+    C 266,287 276,277 283,265
+    Z
+  " />
+</svg>
