@@ -7,17 +7,32 @@ import 'package:path/path.dart' as p;
 /// ── 为什么需要 ──
 ///
 /// 这些脚本原来把项目根目录写死成 `D:\PageReader`。别人 clone 下来
-/// 放到别的路径就全跑不起来。现在统一从脚本自身位置往上推,
+/// 放到别的路径就全跑不起来。现在统一从当前工作目录往上找,
 /// 与项目目录名、盘符都无关。
 ///
-/// 约定:脚本都在 `<项目根>/tool/` 下,所以根 = 本文件的上两级。
+/// ── 为什么不用 Platform.script ──
+///
+/// 实测:`dart run tool/verify_all.dart` 时 `Platform.script`
+/// 指向的是 dart 的临时编译产物(`%TEMP%\xxx\script.dart`),
+/// 不是源文件位置,算出来的根目录会变成 `%TEMP%` —— 完全错。
+///
+/// 改用 `Directory.current`:这些脚本都约定在项目根目录下执行
+/// (`dart run tool/xxx.dart`),所以当前目录就是根。
+/// 为稳妥,再往上找一层:万一从 tool/ 内部执行也能纠正。
 
-/// 项目根目录。
+/// 项目根目录:包含 pubspec.yaml 的那一层。
 String projectRoot() {
-  // Platform.script 指向当前正在执行的脚本。
-  final scriptPath = Platform.script.toFilePath();
-  // <root>/tool/paths.dart → 上两级
-  return p.dirname(p.dirname(scriptPath));
+  var dir = Directory.current.absolute;
+  for (var i = 0; i < 3; i++) {
+    if (File(p.join(dir.path, 'pubspec.yaml')).existsSync()) {
+      return dir.path;
+    }
+    final parent = dir.parent;
+    if (parent.path == dir.path) break;
+    dir = parent;
+  }
+  // 找不到标记文件就退回当前目录 —— 至少行为可预测。
+  return Directory.current.absolute.path;
 }
 
 /// Windows 构建产物里的 exe 路径。
