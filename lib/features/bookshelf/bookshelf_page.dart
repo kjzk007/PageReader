@@ -3,12 +3,15 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/domain/models.dart';
 import '../../core/ports/ports.dart';
 import '../../core/services/progress_recorder.dart';
 import '../../engine/desktop/cdp_engine.dart';
+import '../../engine/desktop/webview2_engine.dart';
+import '../settings/extension_onboarding.dart';
 import '../../engine/android/webview_engine.dart';
 import '../reader/reader_page.dart';
 import '../sync/sync_desktop_page.dart';
@@ -30,6 +33,7 @@ class BookshelfPage extends StatefulWidget {
     this.recorder,
     this.autoOpenBookId,
     this.autoCloseMs,
+    this.autoScrollRatio,
     this.reloadSignal,
   });
 
@@ -46,6 +50,9 @@ class BookshelfPage extends StatefulWidget {
 
   /// 验收用:自动关掉刚打开的窗口(毫秒)。命令行 `--close-after=ms` 才会设置。
   final int? autoCloseMs;
+
+  /// 自动化验收用：打开后先滚到这个比例（0~1），再执行关窗。
+  final double? autoScrollRatio;
 
   /// 后台任务(图标补抓)完成时改变这个值,书架会自动重载。
   final ValueNotifier<int>? reloadSignal;
@@ -106,6 +113,21 @@ class _BookshelfPageState extends State<BookshelfPage> {
       if (targetId != null) {
         await engine.debugCall('Target.closeTarget', {'targetId': targetId});
       }
+    } else if (closeAfter != null && engine is WebView2Engine) {
+      final wv2 = engine;
+      // 内嵌内核的自动化验收：先滚到指定位置再关窗。
+      // 这样才能验证"关闭时保存进度"和"重开时恢复"两条链路，
+      // 而不是只看到窗口打开就算过。
+      await Future<void>.delayed(const Duration(milliseconds: 4500));
+      final ratio = widget.autoScrollRatio;
+      if (ratio != null && ratio > 0) {
+        try {
+          await wv2.scrollToRatio(bookId, ratio);
+          await Future<void>.delayed(const Duration(milliseconds: 1200));
+        } catch (_) {}
+      }
+      await Future<void>.delayed(Duration(milliseconds: closeAfter));
+      await wv2.closeBook(bookId);
     }
   }
 
@@ -129,11 +151,15 @@ class _BookshelfPageState extends State<BookshelfPage> {
     final engine = widget.engine;
     if (engine == null || !mounted) return;
     try {
-      if (engine is CdpEngine) {
-        await engine.reapClosed(
-          persist: (snapshot) => widget.store.saveProgress(snapshot),
-        );
-      }
+      // reapClosed 是所有引擎的接口方法（见 WebEngine），不该只管 CdpEngine。
+      //
+      // 之前写成 `if (engine is CdpEngine)`，结果内嵌 WebView2 那条路
+      // 永远不会消费"窗口已关闭"事件 —— 书架一直显示"阅读中"，
+      // 关窗口那一刻的进度也存不下来。
+      await engine.reapClosed(
+        persist: (snapshot) => widget.store.saveProgress(snapshot),
+      );
+
       // 无条件重算:窗口的开关是引擎的实时状态,不能用"数量是否变化"当判据。
       final latest = engine.openBooks;
       if (!mounted) return;
@@ -193,23 +219,48 @@ class _BookshelfPageState extends State<BookshelfPage> {
     }
     if (_opening.contains(book.id)) return;
 
+    // 内嵌内核：第一次打开书之前问一次要启用哪些插件。
+    //
+    // 不做这一步的话，新用户装完直接打开书，一个插件都加载不上，
+    // 而他未必会去设置页翻那个区块 —— 结果就是"说支持插件但什么都没有"。
+    if (engine is WebView2Engine) {
+      // 书架是普通 StatefulWidget，没有 ref，从 ProviderScope 拿容器。
+      await showExtensionOnboarding(context, ProviderScope.containerOf(context));
+    }
+
+    // 同步占位，再做任何 await。
+    //
+    // ── 为什么必须同步 ──
+    //
+    // 之前的写法是先判 `_opening.contains`，再在下面 setState 里 add。
+    // 中间隔着 `if (engine is WebViewEngine)` 和几个 await，两次点击
+    // 只要落在这个缝隙里就都能通过检查 —— 实测每次点击会触发两次
+    // launch（间隔 111~192ms）。后果是同一本书被 openBook 两次，
+    // 第二次命中原生侧刚建好的 session 又 Navigate 一遍，
+    // 两个恢复任务同时跑，位置会跳。
+    //
+    // setState 回调里只做 add 会返回 bool，Flutter 会报错，
+    // 所以先 add 再 setState(() {}) 触发布丁。
+    _opening.add(book.id);
+    setState(() {});
+
     // Android:推一个阅读页,WebView 渲染在应用内。
     //
     // 桌面端是把书交给外部浏览器窗口,Android 没有这个概念,
     // 必须自己开一个页面并内嵌 WebView。
     if (engine is WebViewEngine) {
-      await _openInAppReader(book, engine);
+      try {
+        await _openInAppReader(book, engine);
+      } finally {
+        if (mounted) {
+          setState(() {
+            _opening.remove(book.id);
+          });
+        }
+      }
       return;
     }
 
-    // setState 的回调必须是同步 void:写成箭头函数会把 add() 的 bool
-    // 返回出去,Flutter 会报 "callback argument returned a Future"。
-    setState(() {
-      _opening.add(book.id);
-    });
-
-    // 冷启动浏览器要 2~5 秒,期间界面必须有反馈,
-    // 否则用户以为点了没反应(这是之前被投诉过的体验问题)。
     _toast('正在打开《${book.title}》…');
 
     try {
@@ -224,9 +275,14 @@ class _BookshelfPageState extends State<BookshelfPage> {
       // 打开成功后立刻启动记录:否则导航事件没人接,进度全丢。
       widget.recorder?.start();
       _reload();
+    } on CdpLaunchError catch (e) {
+      // 需要用户动手的错误（比如"先退出 Edge"）要完整、单独地展示，
+      // 不能被通用 catch 吞成一句"打开失败"。
+      if (!mounted) return;
+      await _showLaunchHelp(e.message);
     } catch (error) {
       if (!mounted) return;
-      _toast('打开失败:$error');
+      _toast('打开失败：$error');
     } finally {
       if (mounted) {
         setState(() {
@@ -302,6 +358,49 @@ class _BookshelfPageState extends State<BookshelfPage> {
         });
       }
     }
+  }
+
+  /// 显示"启动浏览器失败但用户可以自己解决"的提示。
+  ///
+  /// 目前唯一场景:Edge 正在运行,接管不了调试端口。
+  /// 这种错误必须完整展示 —— 用 toast 一闪而过的话,
+  /// 用户只会看到"书没打开",不知道要先退出浏览器。
+  Future<void> _showLaunchHelp(String message) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF191B1F),
+        title: const Text(
+          '无法记录进度',
+          style: TextStyle(
+            color: Color(0xFFF2F3F5),
+            fontSize: 17,
+            fontFamily: 'Microsoft YaHei',
+          ),
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(
+            color: Color(0xFF9AA0A6),
+            fontSize: 13,
+            fontFamily: 'Microsoft YaHei',
+            height: 1.7,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text(
+              '知道了',
+              style: TextStyle(
+                color: Color(0xFF5AC8FA),
+                fontFamily: 'Microsoft YaHei',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _showNoBrowserHelp() async {

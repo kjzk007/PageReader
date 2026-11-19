@@ -78,6 +78,17 @@ abstract interface class WebEngine {
   /// 退出前把所有打开的书都采一遍。
   Future<List<ProgressSnapshot>> flushAll({String deviceId});
 
+  /// 摘掉用户已经关掉的书，返回被摘掉的 bookId。
+  ///
+  /// 书架每次刷新都调它。不在接口里的话，内嵌内核那条路
+  /// 就永远不知道窗口被关了，书架上会一直显示"阅读中"。
+  ///
+  /// [persist] 在摘掉之前用最后一次已知位置回调一次 ——
+  /// 用户关窗口那一刻的进度也要留住。
+  Future<List<String>> reapClosed({
+    Future<void> Function(ProgressSnapshot snapshot)? persist,
+  });
+
   /// 在文档脚本执行前注入,锚点采集/恢复靠它。
   Future<void> installBootstrap(String script);
 

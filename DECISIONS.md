@@ -5,9 +5,9 @@
 
 - 产品名 **PageReader**，Flutter 3.47，Android + Windows
 - 把网页文档当"书"管理，记住读到哪一段，两台设备同步
-- 阅读窗口里没有我们自己的 UI：桌面用 Edge/Chrome 的 `--app` 窗口，移动用内嵌 WebView
+- 阅读窗口里没有我们自己的 UI：桌面内嵌 WebView2 窗口，移动用内嵌系统 WebView
 
-**明确不做**：离线阅读、目录解析、自绘阅读器、进度百分比、浏览器扩展、广告拦截、书签导入、站点级设置、导出/导入体系（只留一个导出按钮）。
+**明确不做**：离线阅读、目录解析、自绘阅读器、进度百分比、广告拦截、书签导入、站点级设置、导出/导入体系（只留一个导出按钮）。
 
 ---
 
@@ -15,13 +15,37 @@
 
 | 端 | 阅读容器 | 进度采集 |
 |---|---|---|
-| Windows | Edge/Chrome `--app` + 专用 profile + CDP | `frameNavigated` + 注入脚本 |
-| Android | 内嵌 WebView | `onUpdateVisitedHistory` + 注入脚本 |
+| Windows | 内嵌 WebView2（程序进程内） | 注入脚本 + `WebMessageReceived` |
+| Android | 内嵌系统 WebView | 注入脚本 + `JavaScriptChannel` |
 
-- 所有书共用一个专用 profile；CDP 端口不写死，实际端口写入状态文件
-- 端口被占或进程未就绪时串行化启动，不并发 spawn
-- **同一本书只允许一个窗口**，再次点击聚焦已有窗口（`Target.activateTarget`）
-- 单实例锁：第二个进程把已有窗口激活后退出
+### 桌面端为什么从「外部浏览器 + CDP」改成「内嵌 WebView2」
+
+原方案启动 Edge/Chrome 的 `--app` 窗口，靠 CDP 连过去。两个绕不过去的问题：
+
+1. **抢 profile**：要用用户的插件和登录态就得用真实 profile，而同一个数据目录只能有一个
+   实例持有调试端口。用户开着浏览器 → 拿不到端口 → 记不了进度。
+2. **Edge 拒绝在默认目录开调试端口**：日志原文
+   `DevTools remote debugging requires a non-default data directory`。
+   复制 profile 到别处能开端口，但 Edge 启动时会删掉未注册的插件目录（实测 19 个只剩 3 个）。
+
+改用内嵌 WebView2 后：内核在程序进程内、独立数据目录、插件用 `AddBrowserExtension`
+引用原目录、进度由注入脚本主动上报。用户浏览器完全不参与。
+
+### 关键实现约束（踩过的坑，都写在代码注释里）
+
+- **`AreBrowserExtensionsEnabled` 必须显式设为 TRUE** —— 默认 false 时
+  `AddBrowserExtension` 返回 `0x80070032`（ERROR_NOT_SUPPORTED），插件一个都加载不上
+- **插件必须在 profile 就绪后立刻加载** —— profile 只在第一个 controller 创建时才存在，
+  所以要提前把插件列表交给原生侧，等 profile 就绪的瞬间加载，赶在首页渲染完成前
+- **C++ 源码里不能有中文注释** —— MSVC 默认按 GBK 解析 UTF-8，中文注释的字节会把
+  后续代码吞掉，报出莫名其妙的语法错误
+- **不能把 `FlutterDesktopMessengerRef` 强转成 `flutter::BinaryMessenger*`** ——
+  前者是 C 不透明句柄，后者是含虚函数的 C++ 类，vtable 是垃圾，首次虚调用就 BEX64 崩溃。
+  必须用 `BinaryMessengerImpl` 桥接
+- **通道要延迟注册** —— `GetRegistrarForPlugin` 不能在 `OnCreate` 或首帧回调里调，
+  会崩。改成 `PostMessage(WM_APP+1)` 在消息循环跑起来后注册
+- **关窗口必须先采位置再销毁** —— 内嵌窗口是直接 `DestroyWindow`，页面收不到
+  `pagehide`，所以拦截 `WM_CLOSE` → 采位置 → 回调里再销毁，另设 1.2 秒兜底定时器
 
 ---
 
@@ -32,7 +56,7 @@
 - 分组单层（`parentId` 预留不用）
 - 网格书架、3:4 封面、最近阅读排序（可切手动拖拽）
 - 搜索：书名、URL、上次停留页面标题
-- 书架显示"这本书正开着"（订阅 target 列表）
+- 书架显示"这本书正开着"（订阅引擎的 openBooks）
 - 删除语义分离：删组只解散（书进未分组），删书连带进度并留墓碑
 
 ### 封面
@@ -53,6 +77,12 @@
 - 归一化：去 fragment、去 `utm_*`/`ref`/`from`/`spm`、query 排序、尾斜杠归一、大小写保留
 - **停留 ≥ 5 秒才写入**；本机单调保护 `updatedAt = max(now, 该书最新 + 1s)`
 - 锚点三级降级：`cssPath`（本端专用）→ `textFingerprint` + 上下文 → `docRatio`
+- **`inChrome` 判断页框必须用「当前遍历到的层级」而不是原始元素** ——
+  `el.closest('main')` 在「侧栏嵌在 main 里」的站点（如 hello-algo）会永远找到 main，
+  把所有导航判断否掉，锚点记到目录项上，表现是「章节能定位、章节内位置丢失」
+- **跳过空文本元素** —— 空 `<p>` 是分隔符或后填容器，选它会得到
+  `textFingerprint=""` 的锚点，只剩比例能兜底
+- **恢复完成后要打标记** —— 否则页面自身滚动（图片懒加载撑高）会覆盖恢复好的位置
 - 滚动容器探测：向上找 `overflow-y: auto/scroll` 且可滚的祖先，失败退回 `window`
 - 锚点连续失败 3 次标记失效；页面结构变化后重采
 - **跨端同步时跳过 `cssPath`**，只用文本指纹 + 比例
@@ -60,17 +90,29 @@
 
 ---
 
-## 五、桌面生命周期
+## 五、插件
 
-- 关书架询问：全部关闭 / 只关应用；两者都先 flush
-- flush 显示遮罩与进度，**超过 3 秒可强制退出**
-- 下次启动自动接管孤儿窗口，书架提示一行
-- 单窗关闭：`targetDestroyed` 立即写最后一次
-- CDP 连不上：标"降级模式"，退化为默认浏览器打开
+- 探查：扫 `%LOCALAPPDATA%` 下 Edge / Chrome / Brave 每个 profile 的每个版本目录，
+  外加程序自己的备份目录
+- **首次打开书前主动问一次**要让哪些插件在阅读时生效（默认全选）。
+  不问的话新用户装完直接开书，插件一个都不加载，而设置里那个区块他未必会注意到
+- 设置里改勾选**立刻生效**，不重启：调 `reloadExtensions` 重新加载并刷新已开窗口
+- 插件文件**不复制**，引用原目录；插件数据存 WebView2 自己的 user data 目录，与浏览器隔离
+- 程序会备份一份插件目录，浏览器把插件删了还能救回来
 
 ---
 
-## 六、移动端交互
+## 六、桌面生命周期
+
+- 关书架询问：全部关闭 / 只关应用；两者都先 flush
+- flush 显示遮罩与进度，**超过 3 秒可强制退出**
+- 单窗关闭：`WM_CLOSE` → 采位置 → `WM_DESTROY`，书架 3 秒轮询摘掉"阅读中"
+- 关窗口期间不能重开同一本：`Session.closing` 标记 + Dart 侧 `_closingBooks` 等待
+- 打开失败要报错，不静默黑屏
+
+---
+
+## 七、移动端交互
 
 - **返回键 / 边缘手势 = 回书架**，不消费网页历史
 - **双指同向横滑 = 页内前进/后退**，首次提示一次；导航后给 2 秒"撤销"
@@ -85,7 +127,7 @@
 
 ---
 
-## 七、同步
+## 八、同步
 
 - 触发：手动；配对：桌面显示二维码 + `IP:端口` + 6 位码（相机权限被拒可手输）
 - 内网 HTTP；快照格式 = 全量 JSON
@@ -96,21 +138,26 @@
 
 ---
 
-## 八、工程
+## 九、工程
 
 - 分层：`core/domain`（纯 Dart）、`core/ports`（接口）、`core/services`（ProgressRecorder / ShelfService / SyncService / SettingsService）、`data`（drift + 实现）、`features`（UI）
 - 状态管理：**Riverpod**
 - 存储：drift + SQLite，WAL；`(bookId, url)` 建唯一索引
 - 启动时跑一次 `integrity_check`，失败则备份重命名并新建空库，不做自动修复
-- 诊断面板（简版）：端口、target 数、最近落库时间
+- 诊断面板（简版）：内核状态、窗口数、最近落库时间
 - 日志：单个本地文件，不轮转，不外传
-- 测试：**只写 URL 归一化与合并逻辑的单测**；锚点靠手动试
+- 测试：283 项单元 + 集成测试；锚点靠 `verify_all.dart` 端到端跑
 - 数据：库文件 + 一个"导出 JSON"按钮（只导出，不导入）
+
+### 构建注意
+
+- **`flutter build windows` 报成功但可能没重新链接 exe** —— 改了 C++ 之后要
+  `Remove-Item build -Recurse -Force` 再构建，否则跑的还是旧 exe
+- 桌面构建依赖 `windows/webview2/`（SDK 已随仓库提供，不用额外下载）
 
 ---
 
-## 九、仍待定（不阻塞）
+## 十、仍待定（不阻塞）
 
-- 清空数据是否连带浏览器 profile（默认只清库）
-- 首次启动的浏览器检测失败文案
+- 清空数据是否连带 WebView2 数据目录（默认只清库）
 - 书架卡片的具体尺寸与每行数量

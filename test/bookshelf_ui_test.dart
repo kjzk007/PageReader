@@ -110,6 +110,12 @@ class NullEngine implements WebEngine {
   Future<void> installBootstrap(String script) async {}
 
   @override
+  Future<List<String>> reapClosed({
+    Future<void> Function(ProgressSnapshot snapshot)? persist,
+  }) async => const [];
+
+  @override
+  @override
   Future<void> shutdown() async {}
 }
 
@@ -202,7 +208,8 @@ void main() {
       );
       await tester.pumpWidget(const SizedBox());
     });
-  });
+  }
+);
 
   group('分组筛选', () {
     testWidgets('点分组只显示该组', (tester) async {

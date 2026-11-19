@@ -204,16 +204,32 @@ const String anchorBootstrapScript = r'''
       }
 
       if (looksChrome) {
-        // 兜底:如果元素自己就在 <main> / [role=main] / #content 里,
-        // 那它一定在正文区,前面所有"像页头/侧栏"的判断都是误判。
+        // Fallback: an element inside <main>/[role=main]/#content is body
+        // text, so the "looks like chrome" guess above was a false positive.
         //
-        // 为什么用 closest 而不是 querySelector:
-        // MDN 的结构是
-        //   MAIN.layout__content > DIV.layout__header > H1
-        // main 是 layout__header 的**祖先**。用 querySelector 往
-        // 后代找永远找不到,所以之前那版兜底完全没起作用。
-        var inMain = el.closest
-          ? el.closest('main,[role="main"],article,#content,.markdown-body,.content')
+        // Two things matter here, both learned the hard way:
+        //
+        // 1) Judge by `node` (the level we are currently walking up from),
+        //    not `el` (the original block). Sites like hello-algo nest the
+        //    sidebar inside <main>:
+        //       main
+        //         +-- nav
+        //               +-- ul > li   <- table of contents entry
+        //    `el.closest("main")` always finds main, so EVERY chrome guess
+        //    gets cancelled and the anchor lands on a TOC item such as
+        //    "\u5e8f". Restoring then scrolls to the top of the chapter -- the
+        //    "chapter is right, exact position is lost" symptom.
+        //
+        // 2) A node that IS a semantic chrome tag (NAV/ASIDE/role=navigation)
+        //    is chrome no matter where it sits, so return immediately.
+        var nodeIsSemanticChrome =
+          tag === 'NAV' || tag === 'ASIDE' ||
+          role === 'navigation' || role === 'complementary';
+        if (nodeIsSemanticChrome) {
+          return true;
+        }
+        var inMain = node.closest
+          ? node.closest('main,[role="main"],article,#content,.markdown-body,.content')
           : null;
         if (!inMain) return true;
       }
@@ -233,6 +249,14 @@ const String anchorBootstrapScript = r'''
       if (inChrome(el)) continue;
       var r = el.getBoundingClientRect();
       if (r.height <= 0 || r.bottom <= 0 || r.top >= vh) continue;
+      // Skip elements with no text.
+      //
+      // An empty <p> is usually a spacer or a container the framework filled
+      // later. Picking one produces an anchor with textFingerprint="",
+      // which leaves only docRatio as a fallback -- so if the CSS path ever
+      // breaks, the restore silently degrades to "roughly the right place".
+      // Observed on hello-algo: p:nth-of-type(6) matched an empty spacer.
+      if (!textOf(el)) continue;
       var visible = Math.min(r.bottom, vh) - Math.max(r.top, 0);
       if (visible > r.height * 0.5) {
         chosen = el;

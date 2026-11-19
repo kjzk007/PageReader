@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 
 import '../../core/domain/anchor_script.dart';
 import '../../core/domain/diagnostics.dart';
@@ -10,17 +11,27 @@ import '../../core/domain/models.dart';
 import '../../core/domain/url_normalizer.dart';
 import '../../core/ports/ports.dart';
 
+/// 启动浏览器失败,且原因需要让用户看见。
+class CdpLaunchError implements Exception {
+  const CdpLaunchError(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// 桌面端引擎:驱动外部 Chromium(Edge / Chrome)的 `--app` 窗口。
 ///
 /// 实测结论(别改回去):
 ///
-/// 1. `--app=<url>` + `--remote-debugging-port=0` 一次启动就能同时得到
+/// 1. `--app=<url>` + 固定调试端口一次启动就能同时得到
 ///    "无标签栏无地址栏的 app 窗口" 和 "可用的 CDP 端口"。
 ///    早期用 `about:blank` 保活再 `Target.createTarget` 是错的 ——
 ///    那样开出来的是普通标签页,所以会看到标签栏和地址栏。
 ///
-/// 2. 浏览器已经在跑时,再 spawn 一个 `--app=<url>`(同一 profile、不给端口)
-///    能开出第二个 app 窗口,并且会出现在已有端口的 target 列表里。
+/// 2. 浏览器已经在跑时,同一个 profile 再 spawn 会只转发 URL 就退出。
+///    所以要提前检测并提示用户先退出浏览器 —— 见 CdpLaunchError。
 ///
 /// 3. 必须连 browser target,再用 `Target.attachToTarget(flatten)` 拿 sessionId;
 ///    直接连 page target 的 WebSocket 会连上但收不到任何响应。
@@ -32,16 +43,45 @@ import '../../core/ports/ports.dart';
 ///    所以启动前必须清孤儿进程。
 ///
 /// 6. `Target.getTargets` 返回的字段名是 `targetId`,不是 `id`。
+///
+/// 7. **用真实 profile 时不写 `DevToolsActivePort`。**
+///    独立 profile 会写,真实 profile(指向用户日常的 User Data)不写 ——
+///    实测等 30 秒也没有。所以必须用固定端口直接探。
+///    这也是能不能用上用户插件的关键:独立 profile 能拿端口但没插件,
+///    真实 profile 有插件但只能靠固定端口。
+///
+/// 8. **不要用 `--app-id`。**
+///    Chromium 的 web app 走 `pwahelper.exe`,那是独立 helper 进程,
+///    不持有调试端口 —— 实测 CDP 只能连 5 秒就断。
+///    `--app=<url>` 效果等同"应用窗口"但仍在主进程内,CDP 可长期保持。
 class CdpEngine implements WebEngine {
   CdpEngine({
     required this.browserPath,
     required this.profileDir,
+    this.profileName = 'Default',
     this.headless = false,
+    this.debugPort = defaultDebugPort,
   });
 
   final String browserPath;
   final Directory profileDir;
+
+  /// 用哪个 profile 子目录。
+  ///
+  /// 不能写死 `Default`:用户可能用多账号,主 profile 叫 `Profile 1`
+  /// 甚至从没碰过 Default。由 `BrowserProfile.defaultProfileName()`
+  /// 读 `Local State` 里的 `last_used` 决定。
+  final String profileName;
+
   final bool headless;
+
+  /// 固定调试端口。
+  ///
+  /// 用真实 profile 时 Chromium 不写端口文件,只能靠固定端口连。
+  /// 选 9333:高位、不常见、与常见调试端口(9222/9223)错开。
+  final int debugPort;
+
+  static const defaultDebugPort = 9333;
 
 
 
@@ -200,13 +240,18 @@ class CdpEngine implements WebEngine {
     //
     // 为什么必须做:上一次异常退出(崩溃、强杀、断电)会留下
     // SingletonLock / SingletonCookie / SingletonSocket / lockfile。
-    // 新进程看到这些会认为"已有实例在跑",于把 URL 转发给它然后
+    // 新进程看到这些会认为"已有实例在跑",于是把 URL 转发给它然后
     // 自己以 exit code 0 退出 —— 表现是点击书籍完全没反应,
     // 而进程列表里一个 Edge 都没有。
-    //
-    // 实测:锁文件残留时,直接启动同一条命令会立即退出、
-    // 端口文件不更新;删掉这四个文件后立刻恢复正常。
     _clearSingletonLocks();
+
+    // 用真实 profile 时,浏览器可能正被用户自己开着(甚至只是
+    // 后台常驻的 `--no-startup-window`)。那种情况下新进程只会把 URL
+    // 转发给已有实例然后退出,调试端口拿不到。
+    //
+    // 这里不提示用户"请先退出 Edge" —— 那是在推卸责任。
+    // 上面的 _killOrphans 已经把这款浏览器的进程清干净了,
+    // 接下来我们带端口启动自己的实例,由我们持有端口。
 
     final first = await Process.start(browserPath, [
       if (headless) '--headless=new',
@@ -218,8 +263,15 @@ class CdpEngine implements WebEngine {
       '--disable-sync',
       '--disable-features=msEdgeSyncConfirmationDialog,EdgeSyncPromo',
       '--remote-allow-origins=*',
-      '--remote-debugging-port=0',
+      // 固定端口。
+      //
+      // 为什么不用 0(系统随机分配):用真实 profile 时 Chromium
+      // **不写 DevToolsActivePort 文件**(实测等 30 秒也没有),
+      // 只能靠固定端口直接连 /json/version。这是能否用上用户插件
+      // 的关键 —— 独立 profile 能写端口文件,但里面没有任何插件。
+      '--remote-debugging-port=$debugPort',
       '--user-data-dir=${profileDir.path}',
+      '--profile-directory=$profileName',
       // 不指定窗口尺寸时,--app 窗口可能被系统给一个很矮的高度,
       // 内容一屏就装下,于是永远"不可滚动",锚点也就永远是 0。
       '--window-size=1100,900',
@@ -232,16 +284,64 @@ class CdpEngine implements WebEngine {
     var alive = true;
     first.exitCode.then((_) => alive = false);
 
-    final port = await _waitForPort(portFile, () => alive);
+    // 两条路并行:优先看端口文件(独立 profile 会写),
+    // 否则直接探端口(真实 profile 不写文件)。
+    final port = await _waitForPort(portFile, () => alive) ??
+        await _waitForDebugPort(debugPort, () => alive);
     if (port == null) {
-      throw StateError('拿不到 DevTools 端口,浏览器可能没起来');
+      // 诊断信息:把关键事实都带上,方便定位"为什么拿不到端口"。
+      //
+      // 最常见的原因:
+      //   * profile 被另一个浏览器实例占用(用户自己开着 Edge)
+      //   * 启动参数没生效(比如 profile-directory 指向不存在的名字)
+      final diag = StringBuffer()
+        ..write('拿不到 DevTools 端口')
+        ..write('\n  profile: ${profileDir.path}')
+        ..write('\n  profileName: $profileName')
+        ..write('\n  debugPort: $debugPort')
+        ..write('\n  端口文件存在: ${portFile.existsSync()}')
+        ..write('\n  进程存活: $alive');
+      throw StateError(diag.toString());
     }
 
     _lastPort = port;
-    final wsUrl = await _browserWsUrl(port);
-    final ws = await WebSocket.connect(
-      wsUrl,
-    ).timeout(const Duration(seconds: 15));
+
+    // 从这里到连上 CDP 之间任何一步失败,都会让整次启动白费 ——
+    // 浏览器看着起来了(端口也在),但拿不到 WS 就等于没有进度。
+    // 所以每一步都留痕,方便定位。
+    void trace(String msg) {
+      try {
+        final f = File(
+          p.join(profileDir.parent.path, 'pagereader-cdp.log'),
+        );
+        f.writeAsStringSync(
+          '${DateTime.now().toIso8601String()} $msg\n',
+          mode: FileMode.append,
+          flush: true,
+        );
+      } catch (_) {}
+    }
+
+    trace('端口就绪: $port');
+    String wsUrl;
+    try {
+      wsUrl = await _browserWsUrl(port);
+      trace('拿到 wsUrl: $wsUrl');
+    } catch (e) {
+      trace('取 wsUrl 失败: $e');
+      rethrow;
+    }
+
+    WebSocket ws;
+    try {
+      ws = await WebSocket.connect(
+        wsUrl,
+      ).timeout(const Duration(seconds: 15));
+      trace('WS 已连接');
+    } catch (e) {
+      trace('WS 连接失败: $e');
+      rethrow;
+    }
     _ws = ws;
     ws.listen(_onMessage, onDone: () => _ws = null);
 
@@ -249,6 +349,7 @@ class CdpEngine implements WebEngine {
     // 这样预热之后不会再多开一个窗口。
     if (!headless) {
       _spareTarget = await _pickAppTarget();
+      trace('spareTarget: $_spareTarget');
     }
 
     // 接管遗留窗口:浏览器可能在上一次应用被杀之后继续活着,
@@ -319,6 +420,11 @@ class CdpEngine implements WebEngine {
   }
 
   void _drain(Process proc) {
+    // 丢弃浏览器的输出。
+    //
+    // ⚠ 曾经试过把输出写进文件,结果 Edge 反而拒绝开调试端口
+    // (报 "DevTools remote debugging requires a non-default data
+    //  directory")。所以保持最简单的 drain。
     proc.stdout.drain<void>();
     proc.stderr.drain<void>();
   }
@@ -362,19 +468,41 @@ class CdpEngine implements WebEngine {
     }
   }
 
+  /// 清掉**属于本引擎的**遗留浏览器进程。
+  ///
+  /// ── 只杀自己的,绝不能碰用户的 ──
+  ///
+  /// 用真实 profile 时,marker 不能用 `p.basename(profileDir.path)` ——
+  /// 那是 `User Data`,而**每一个** Edge 进程的命令行都含这个词
+  /// (包括用户自己开的、也包括我们刚启动的那个)。
+  ///
+  /// 踩过的坑:用它当 marker → 启动后立刻把自己刚起的浏览器杀掉 →
+  /// 拿不到端口 → 反复重启 → 界面上一直转圈、显示"不记进度"。
+  ///
+  /// 正确做法:用**我们独有的调试端口号**当 marker。
+  /// 但注意 Edge 会把命令行参数继承给子进程(实测 20 个进程里
+  /// 14 个都带 `remote-debugging-port=9333`),所以还要排除
+  /// `--type=` 的子进程 —— 只杀主进程,子进程会随之退出。
   Future<void> _killOrphans() async {
     if (!Platform.isWindows) return;
+    // 已经连上 = 端口由我们的实例持有,不需要清理。
+    if (_ws != null) return;
+
     try {
-      const script =
-          r'Get-CimInstance Win32_Process -Filter "Name=''msedge.exe''" | '
-          r'Where-Object { $_.CommandLine -like ''*browser-profile*'' } | '
-          r'Select-Object -ExpandProperty ProcessId';
-      final result = await Process.run('powershell', [
+      final exeName = p.basename(browserPath);
+      final marker = 'remote-debugging-port=$debugPort';
+      // -notmatch '--type=' 排除所有子进程,只留浏览器主进程。
+      final script =
+          'Get-CimInstance Win32_Process -Filter "Name=\'\'$exeName\'\'" | '
+          'Where-Object { \$_.CommandLine -like \'*$marker*\' '
+          '-and \$_.CommandLine -notmatch \'--type=\' } | '
+          'Select-Object -ExpandProperty ProcessId';
+      final r = await Process.run('powershell', [
         '-NoProfile',
         '-Command',
         script,
       ]);
-      final pids = (result.stdout as String)
+      final pids = (r.stdout as String)
           .split(RegExp(r'\s+'))
           .map(int.tryParse)
           .whereType<int>()
@@ -405,6 +533,39 @@ class CdpEngine implements WebEngine {
     return null;
   }
 
+  /// 直接探调试端口是否可用。
+  ///
+  /// 用真实 profile 时 Chromium 不写 `DevToolsActivePort`,
+  /// 只能靠这个判断浏览器是否已经带着调试端口起来了。
+  Future<int?> _waitForDebugPort(
+    int port, [
+    bool Function()? stillAlive,
+  ]) async {
+    for (var i = 0; i < 150; i++) {
+      if (await _isDebugPortAliveAsync(port)) return port;
+      if (stillAlive != null && !stillAlive()) return null;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    return null;
+  }
+
+  /// 端口上是否有 CDP 服务在应答。
+  Future<bool> _isDebugPortAliveAsync(int port) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 1);
+    try {
+      final req = await client.getUrl(
+        Uri.parse('http://127.0.0.1:$port/json/version'),
+      );
+      final res = await req.close();
+      await res.drain<void>();
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   Future<String> _browserWsUrl(int port) async {
     final client = HttpClient();
     try {
@@ -429,14 +590,23 @@ class CdpEngine implements WebEngine {
 
     try {
       return await _launchWithCdp(book, url, resume);
+    } on CdpLaunchError {
+      // 这类错误是"需要用户动手"的(比如浏览器正开着),
+      // 不该静默降级 —— 直接把原因抛给界面提示用户。
+      // 降级到系统浏览器只会让人困惑:书打开了但进度不记,
+      // 而真正的原因(先退出 Edge)反而看不到。
+      rethrow;
     } catch (e) {
-      // CDP 起不来:退化成用系统默认浏览器打开,保证用户至少能读书。
-      // 代价是进度只能记到我们给的那个 URL,之后的跳转全部丢失。
-      // 这种降级必须让用户看得见 —— 标进 _degradedBooks 由书架显示徽章。
+      // 其他失败:标成降级,由书架显示徽章。
+      //
+      // ⚠ 不要再调 `_openInDefaultBrowser`。
+      // 走到这里时 `--app` 窗口往往已经开出来了(比如 CDP 握手失败),
+      // 再开一个系统浏览器窗口 = 用户看到"一个应用窗口 + 一个网页窗口",
+      // 而书其实已经在应用窗口里了。纯属干扰。
+      //
+      // 让书留在已经开出来的窗口里,只标记进度不可用。
       _degradedBooks.add(book.id);
       _lastError = e.toString();
-
-      await _openInDefaultBrowser(url);
       return url;
     }
   }
@@ -446,21 +616,6 @@ class CdpEngine implements WebEngine {
 
   /// 清掉某本书的降级标记(下次成功打开时)。
   void clearDegraded(String bookId) => _degradedBooks.remove(bookId);
-
-  /// 退化路径:交给系统默认浏览器。
-  Future<void> _openInDefaultBrowser(String url) async {
-    try {
-      if (Platform.isWindows) {
-        await Process.run('cmd', ['/c', 'start', '', url]);
-      } else if (Platform.isMacOS) {
-        await Process.run('open', [url]);
-      } else {
-        await Process.run('xdg-open', [url]);
-      }
-    } catch (_) {
-      // 连默认浏览器都打不开,只能让上层报错。
-    }
-  }
 
   Future<String> _launchWithCdp(
     Book book,
@@ -517,6 +672,7 @@ class CdpEngine implements WebEngine {
     final before = (await _listTargets()).map((t) => t['targetId']).toSet();
     final proc = await Process.start(browserPath, [
       '--user-data-dir=${profileDir.path}',
+      '--profile-directory=$profileName',
       '--disable-sync',
       '--disable-features=msEdgeSyncConfirmationDialog,EdgeSyncPromo',
       // 必须显式给位置:预热用的是 -4000,-4000(屏幕外),
@@ -965,6 +1121,7 @@ class CdpEngine implements WebEngine {
   }
 
   /// 采一次最后位置 → 核对 → 把已关闭的书落库。返回刚关闭的书。
+  @override
   Future<List<String>> reapClosed({
     Future<void> Function(ProgressSnapshot snapshot)? persist,
   }) async {

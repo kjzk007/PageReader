@@ -70,9 +70,16 @@ class FakeEngine implements WebEngine {
     return out;
   }
 
+
   @override
   Future<void> installBootstrap(String script) async {}
 
+  @override
+  Future<List<String>> reapClosed({
+    Future<void> Function(ProgressSnapshot snapshot)? persist,
+  }) async => const [];
+
+  @override
   @override
   Future<void> shutdown() async {}
 }

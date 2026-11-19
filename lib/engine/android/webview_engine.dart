@@ -501,6 +501,13 @@ class WebViewEngine implements WebEngine {
     return out;
   }
 
+  /// Android 端所有阅读页都在本进程内，不存在"用户从外部关掉窗口"：
+  /// 返回书架时 controller 由 openBooks 自己维护，没有需要摘除的残留。
+  @override
+  Future<List<String>> reapClosed({
+    Future<void> Function(ProgressSnapshot snapshot)? persist,
+  }) async => const [];
+
   @override
   Future<void> installBootstrap(String script) async {
     for (final c in _controllers.values) {

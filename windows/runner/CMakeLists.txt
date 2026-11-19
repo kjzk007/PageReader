@@ -10,6 +10,7 @@ add_executable(${BINARY_NAME} WIN32
   "flutter_window.cpp"
   "main.cpp"
   "utils.cpp"
+  "webview_host.cpp"
   "win32_window.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
   "Runner.rc"
@@ -35,6 +36,22 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
+
+# ── WebView2 ──
+#
+# 内嵌内核需要 WebView2 SDK（头文件 + 加载器库）。
+# SDK 文件放在 windows/webview2/ 下随仓库一起版本管理，
+# 这样别人 clone 下来不用额外装依赖就能构建。
+set(WEBVIEW2_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../webview2")
+target_include_directories(${BINARY_NAME} PRIVATE "${WEBVIEW2_DIR}/include")
+target_link_libraries(${BINARY_NAME} PRIVATE "${WEBVIEW2_DIR}/x64/WebView2Loader.dll.lib")
+
+# 把 WebView2Loader.dll 拷到输出目录 —— 运行时需要它。
+add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${WEBVIEW2_DIR}/x64/WebView2Loader.dll"
+    "$<TARGET_FILE_DIR:${BINARY_NAME}>/WebView2Loader.dll"
+)
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)

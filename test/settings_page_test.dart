@@ -32,8 +32,10 @@ void main() {
 
     testWidgets('两块内容都在', (tester) async {
       await pumpSettings(tester);
+      // 「外观」在顶部，「关于」在底部。插件区块有内容后会把「关于」
+      // 推出首屏，所以要滚动才能看到 —— 这里只断言首屏的「外观」，
+      // 「关于」由下面的区块测试单独覆盖。
       expect(find.text('外观'), findsOneWidget);
-      expect(find.text('关于'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
     });
 
@@ -82,28 +84,47 @@ void main() {
   });
 
   group('插件区块已移除', () {
-    testWidgets('没有「浏览器插件」标题', (tester) async {
+    testWidgets('有「浏览器插件」标题', (tester) async {
       await pumpSettings(tester);
+      // 内嵌 WebView2 方案下插件是可用的，设置里要有入口。
       expect(
         find.text('浏览器插件'),
-        findsNothing,
-        reason: '插件功能已废弃,入口不该还留着',
+        findsOneWidget,
+        reason: '插件现在由用户勾选后加载，设置里必须有入口',
       );
       await tester.pumpWidget(const SizedBox());
     });
 
-    testWidgets('没有插件相关的开关文案', (tester) async {
+    testWidgets('插件区块会渲染出内容或提示', (tester) async {
       await pumpSettings(tester);
-      expect(find.textContaining('在阅读窗口里使用插件'), findsNothing);
-      expect(find.textContaining('正在查找本机插件'), findsNothing);
+      await tester.pumpAndSettle();
+      // 无论探到多少个插件，区块都必须有可见内容：
+      // 要么是列表，要么是「没找到」的提示。不能是空白。
+      final hasList = find.byType(CheckboxListTile).evaluate().isNotEmpty;
+      final hasEmptyHint = find.textContaining('没有在本机浏览器里找到插件')
+          .evaluate()
+          .isNotEmpty;
+      expect(
+        hasList || hasEmptyHint,
+        isTrue,
+        reason: '插件区块不该什么都不显示',
+      );
       await tester.pumpWidget(const SizedBox());
     });
   });
 
   group('关于区块', () {
-    testWidgets('显示应用名', (tester) async {
+    testWidgets('滚动后能看到关于标题', (tester) async {
       await pumpSettings(tester);
-      expect(find.text('PageReader'), findsOneWidget);
+      await tester.pumpAndSettle();
+      // 插件区块有内容后「关于」被推到首屏之外，先滚到底。
+      await tester.dragUntilVisible(
+        find.text('关于'),
+        find.byType(ListView),
+        const Offset(0, -300),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('关于'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
     });
   });

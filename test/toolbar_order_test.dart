@@ -73,6 +73,12 @@ class E implements WebEngine {
   @override
   Future<void> installBootstrap(String s) async {}
   @override
+  Future<List<String>> reapClosed({
+    Future<void> Function(ProgressSnapshot snapshot)? persist,
+  }) async => const [];
+
+  @override
+  @override
   Future<void> shutdown() async {}
 }
 
@@ -117,7 +123,8 @@ void main() {
     expect(search.dx, lessThan(add.dx), reason: '搜索应在加号左边');
 
     await tester.pumpWidget(const SizedBox());
-  });
+  }
+);
 
   testWidgets('四个按钮都居中同一行', (tester) async {
     // 模拟桌面端窗口尺寸

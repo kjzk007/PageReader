@@ -158,3 +158,81 @@ final themeModeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(
   ThemeModeNotifier.new,
 );
 
+
+/// 用户勾选启用的浏览器插件。
+///
+/// ── 为什么让用户选，而不是全加载 ──
+///
+/// 用户装了 20 个插件，不代表希望阅读窗口里全跑起来:
+/// 有些会注入浮窗、有些会改页面样式、有些纯粹是别处用的。
+/// 全加载既慢又干扰阅读。所以首次启动时列出清单让用户勾，
+/// 之后在设置里随时调整。
+class ExtensionSettings {
+  const ExtensionSettings({
+    required this.enabledIds,
+    this.asked = false,
+  });
+
+  /// 已启用的插件 ID。
+  final Set<String> enabledIds;
+
+  /// 是否已经问过用户要启用哪些插件。
+  ///
+  /// ── 为什么需要这个标记 ──
+  ///
+  /// 插件默认一个都不启用。新用户装完直接打开书，一个插件都加载不上，
+  /// 而设置页里那个插件区块他又未必会注意到。所以要在他第一次打开书
+  /// 之前主动问一次：列出本机插件让他勾。
+  ///
+  /// 问过之后就不再打扰 —— 哪怕他一个都没勾，那也是他的选择。
+  final bool asked;
+
+  bool isEnabled(String id) => enabledIds.contains(id);
+
+  ExtensionSettings copyWith({Set<String>? enabledIds, bool? asked}) =>
+      ExtensionSettings(
+        enabledIds: enabledIds ?? this.enabledIds,
+        asked: asked ?? this.asked,
+      );
+}
+
+class ExtensionSettingsNotifier extends Notifier<ExtensionSettings> {
+  @override
+  ExtensionSettings build() {
+    final store = ref.read(settingsStoreProvider);
+    if (store == null) {
+      return const ExtensionSettings(enabledIds: {});
+    }
+    final raw = store.readStringList('extensions.enabled');
+    final asked = store.readString('extensions.asked') == '1';
+    return ExtensionSettings(enabledIds: raw.toSet(), asked: asked);
+  }
+
+  Future<void> setEnabled(Set<String> ids) async {
+    state = state.copyWith(enabledIds: ids);
+    await ref
+        .read(settingsStoreProvider)
+        ?.writeStringList('extensions.enabled', ids.toList()..sort());
+  }
+
+  /// 标记"已经问过用户"，之后不再弹引导。
+  Future<void> markAsked() async {
+    state = state.copyWith(asked: true);
+    await ref.read(settingsStoreProvider)?.writeString('extensions.asked', '1');
+  }
+
+  Future<void> toggle(String id, bool enabled) async {
+    final next = Set<String>.from(state.enabledIds);
+    if (enabled) {
+      next.add(id);
+    } else {
+      next.remove(id);
+    }
+    await setEnabled(next);
+  }
+}
+
+final extensionSettingsProvider =
+    NotifierProvider<ExtensionSettingsNotifier, ExtensionSettings>(
+      ExtensionSettingsNotifier.new,
+    );

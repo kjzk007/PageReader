@@ -20,7 +20,11 @@ import 'core/domain/models.dart';
 import 'data/dev_seed.dart';
 import 'data/sqlite_library_store.dart';
 import 'engine/desktop/browser_locator.dart';
+import 'engine/desktop/browser_profile.dart';
+import 'engine/desktop/browser_shadow.dart';
 import 'engine/desktop/cdp_engine.dart';
+import 'engine/desktop/extension_probe.dart';
+import 'engine/desktop/webview2_engine.dart';
 import 'engine/android/webview_engine.dart';
 import 'features/bookshelf/bookshelf_page.dart';
 import 'features/shell/quit_guard.dart';
@@ -61,51 +65,80 @@ Future<Directory> resolveDataDir() async {
 ///
 /// 两者实现同一个 WebEngine 接口,书架与记录器无需知道区别。
 final engineProvider = FutureProvider<WebEngine?>((ref) async {
-  // Android:内嵌 WebView,不需要找外部浏览器。
+  // Android:内嵌系统 WebView。
   if (Platform.isAndroid) {
     final engine = WebViewEngine();
     ref.onDispose(engine.shutdown);
     return engine;
   }
 
-  // 桌面:必须有 Chromium 内核的浏览器。
   if (!Platform.isWindows && !Platform.isLinux && !Platform.isMacOS) {
     return null;
   }
-  final browser = BrowserLocator.find();
-  if (browser == null) return null;
 
   final support = await resolveDataDir();
-  final profile = Directory(p.join(support.path, 'browser-profile'));
 
-  // 关于插件:不支持。
+  // ── 桌面端：内嵌 WebView2 内核 ──
   //
-  // 试过三条路,没有一条能同时满足"插件可用 + 进度正常":
+  // 之前是启动外部 Edge（--app + 调试端口），那套做法有个绕不过去的矛盾:
+  // 要插件和登录态就得用用户的真实 profile，而同一个 data 目录只能有
+  // 一个实例持有调试端口 —— 用户开着浏览器我们就拿不到端口、记不了进度，
+  // 而去杀用户的浏览器又会让用户没法上网。
   //
-  //  1. 独立 profile + --load-extension
-  //     插件能跑、登录态能搬,但插件认为自己「首次安装」——
-  //     每次启动都弹欢迎页(多出一个窗口)。要消除它得往
-  //     Secure Preferences 写 30+ 字段的安装记录,而 Edge 启动时会
-  //     重写这个文件,我写的记录被丢掉(实测两次)。
+  // 内嵌内核把浏览器放进我们自己的进程:
+  //   * 独立 user data 目录，打开 program 自己的数据目录下，不和用户抢
+  //   * 插件用 AddBrowserExtension 显式加载，引用原目录不复制文件
+  //   * 用户自己的浏览器可以一直开着
   //
-  //  2. 直接用用户的日常 profile
-  //     插件原生可用、无欢迎页。但 Edge 对指向真实 User Data 的
-  //     --user-data-dir **不写 DevToolsActivePort**(实测等 30 秒没有),
-  //     这是安全策略:防止已登录数据被自动化工具读取。
-  //     没有端口 = 完全没有进度记录。
+  // ── 首次使用：建工作区 ──
   //
-  //  3. 自写 Edge 扩展做进度采集
-  //     技术上可行,但要用户额外安装扩展并维护,工作量远超收益。
-  //
-  // 进度记录是这个产品的根本,插件是附加能力。
-  // 既然不能两全,选择保住进度 —— 不加载任何插件。
+  // 把用户浏览器 profile 里的 Cookie / 登录态复制过来（不含插件目录，
+  // 插件由用户勾选后单独加载），这样打开网页时是已登录状态。
+  final userDataDir = Directory(p.join(support.path, 'webview2'));
+  if (!userDataDir.existsSync()) {
+    userDataDir.createSync(recursive: true);
+  }
 
-  final engine = CdpEngine(browserPath: browser, profileDir: profile);
+  final bootstrapMarker = File(p.join(userDataDir.path, '.bootstrapped'));
+  if (!bootstrapMarker.existsSync()) {
+    final browser = BrowserLocator.find();
+    if (browser != null) {
+      final userProfile = BrowserProfile.resolve(browser);
+      if (userProfile != null) {
+        // 只复制 Cookie 和登录态需要的部分，不复制插件目录 ——
+        // 插件由用户在首次启动时勾选，然后显式加载。
+        await BrowserShadow.bootstrapUserData(
+          source: userProfile,
+          target: userDataDir,
+        );
+      }
+    }
+    try {
+      bootstrapMarker.writeAsStringSync(DateTime.now().toIso8601String());
+    } catch (_) {}
+  }
+
+  // 用户勾选启用的插件：从本机探查到的列表里筛出已启用的那几个。
+  //
+  // 用 read 而不是 watch：watch 会让 engineProvider 重建，而它的
+  // onDispose 会调用 engine.shutdown() —— 所有已打开的阅读窗口
+  // 都会被关掉。用户只是在设置里勾了个插件，不该丢掉正在读的书。
+  //
+  // 改勾选后的即时生效由设置页直接调 WebView2Engine.reloadExtensions
+  // 完成（见 features/settings/extension_section.dart）。
+  final extSettings = ref.read(extensionSettingsProvider);
+  final enabled = ExtensionProbe.probe()
+      .where((e) => extSettings.isEnabled(e.id) && e.isUsable)
+      .map((e) => e.path)
+      .toList();
+
+  final engine = WebView2Engine(
+    userDataDir: userDataDir.path,
+    extensionPaths: enabled,
+  );
   ref.onDispose(engine.shutdown);
   return engine;
 });
-
-/// 启动后补齐缺失的封面图标。
 ///
 /// 图标只在"加书"时抓,种子数据和老记录都没有 iconUrl,
 /// 书架上就永远是字母块。这里在后台补一次,补到就更新,
@@ -418,6 +451,9 @@ class _ShelfHost extends ConsumerWidget {
         recorder: recorder,
         autoOpenBookId: _envValue('PAGEREADER_OPEN'),
         autoCloseMs: int.tryParse(_envValue('PAGEREADER_CLOSE_AFTER') ?? ''),
+        autoScrollRatio: double.tryParse(
+          _envValue('PAGEREADER_SCROLL_TO') ?? '',
+        ),
         reloadSignal: ref.watch(shelfReloadProvider),
       ),
     );

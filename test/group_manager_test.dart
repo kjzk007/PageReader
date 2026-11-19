@@ -108,6 +108,12 @@ class NoopEngine implements WebEngine {
   Future<void> installBootstrap(String script) async {}
 
   @override
+  Future<List<String>> reapClosed({
+    Future<void> Function(ProgressSnapshot snapshot)? persist,
+  }) async => const [];
+
+  @override
+  @override
   Future<void> shutdown() async {}
 }
 
@@ -152,7 +158,8 @@ void main() {
     expect(find.text('后端'), findsWidgets);
     expect(find.text('1 本'), findsOneWidget, reason: '应显示组内书数');
     await tester.pumpWidget(const SizedBox());
-  });
+  }
+);
 
   testWidgets('空分组列表给出提示', (tester) async {
     final store = GroupStore(books: [], groups: []);

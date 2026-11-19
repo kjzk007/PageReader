@@ -74,6 +74,12 @@ class E implements WebEngine {
   @override
   Future<void> installBootstrap(String s) async {}
   @override
+  Future<List<String>> reapClosed({
+    Future<void> Function(ProgressSnapshot snapshot)? persist,
+  }) async => const [];
+
+  @override
+  @override
   Future<void> shutdown() async {}
 }
 
@@ -143,7 +149,8 @@ void main() {
     );
 
     await tester.pumpWidget(const SizedBox());
-  });
+  }
+);
 
   // 右/下边界由 Flutter 的 showMenu 内部处理(它会自动往左/往上挪)。
   // 这里只验证我们能正确把光标位置传给它 —— 即上面的"跟随光标"测试。

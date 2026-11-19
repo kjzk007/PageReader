@@ -51,6 +51,12 @@ class StubEngine implements WebEngine {
   Future<void> installBootstrap(String script) async {}
 
   @override
+  Future<List<String>> reapClosed({
+    Future<void> Function(ProgressSnapshot snapshot)? persist,
+  }) async => const [];
+
+  @override
+  @override
   Future<void> shutdown() async {}
 }
 
@@ -70,6 +76,7 @@ class StubStore implements LibraryStore {
   Future<List<Book>> loadBooksIncludingDeleted() async {
     throw UnimplementedError('测试用不到');
   }
+
 
   @override
   Future<void> deleteProgressOf(String bookId) async {}

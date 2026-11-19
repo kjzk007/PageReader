@@ -76,6 +76,12 @@ class E implements WebEngine {
   @override
   Future<void> installBootstrap(String s) async {}
   @override
+  Future<List<String>> reapClosed({
+    Future<void> Function(ProgressSnapshot snapshot)? persist,
+  }) async => const [];
+
+  @override
+  @override
   Future<void> shutdown() async {}
 }
 
@@ -103,6 +109,7 @@ void expectMenuVisible() {
   for (final l in menuLabels) {
     expect(find.text(l), findsOneWidget, reason: '菜单项「$l」没出现');
   }
+
 }
 
 void main() {
