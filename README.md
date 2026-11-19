@@ -1,71 +1,43 @@
 # PageReader
 
-把网页文档当书管理，记住读到哪一段。
+PageReader 尝试解决以下痛点：
 
-很多技术文档只有网页版，没有 EPUB、没有阅读器。用浏览器读，关掉就忘了读到哪；
-用稍后读工具，它管的是"读没读"，不管"读到第几段"。
+1. 你想阅读网页文档方便学习；
+2. 每次打开网页非常零散，不利于管理；
+3. 每次打开网页忘记自己读到哪里；
+4. 网页不像软件，但“作为应用安装”后，每次打开都回到了一开始安装的页面。
 
-PageReader 解决这一件事：**给网页文档一个书架，精确记住滚到哪一段**。
-Windows 和 Android 两端数据互通，换设备接着读。
+> **我想强调的诚信**：
+> 
+> 它是通过 vibe coding 开发，即便在动手前做了大量的技术讨论、选型决策、方案探索，但也不能取代真实人类工程师的开发过程，所以即使已经通过多个真机验证，也难免出现一些某些意外情况，如果您在使用过程中遇到什么问题，请向我提交issue
 
----
 
-## 它做什么
+# 不用技术参数遮掩体验，直接描述使用 PageReader 的感受
 
-**书架**　把文档站加进来，抓站点的图标和主题色做成封面。支持分组、搜索、按最近阅读排序。
+> 就像阅读软件的读电子书的体验，没别的
 
-**精确进度**　不是"读到 47%"，而是记住具体那一段。页面滚到哪里，关掉（甚至直接杀进程）
-再打开，回到原处。多级降级：CSS 路径 → 文本指纹 → 文档比例，前一级失效就退到下一级。
+使用流程：
 
-**跨设备同步**　同一局域网内直连，数据不经任何服务器。扫码配对一次，之后书架、分组、
-阅读进度双向同步，两端状态一致。
+1. 下载 Windows 便携包并解压
+2. 打开桌面应用，并点击右上角添加你的链接（添加时也可以自己命名链接的名称）
+3. 点击添加的“书籍”，开始阅读即可
 
-**事件驱动上报**　不是定时轮询。页面滚动（800ms 防抖）、`pushState`、`popstate`、
-`hashchange`、`pagehide`、`beforeunload`、切到后台，都会立刻上报一次位置。
-
----
-
-## 技术选择
-
-### 桌面端：外部浏览器 + CDP
-
-不用内嵌 WebView，而是启动 Edge/Chrome 的 `--app` 窗口（去掉地址栏的独立窗口），
-通过 DevTools Protocol 注入脚本、读取位置、恢复锚点。
-
-为什么这么选：Chromium 的内核由浏览器自己更新，不需要应用跟着升级；
-`--app` 窗口的观感和原生应用一致；CDP 提供的能力比 WebView API 完整得多
-（比如 `Page.addScriptToEvaluateOnNewDocument` 能在文档解析前注入，
-这是移动端 WebView 拿不到的时机）。
-
-代价：依赖用户机器上有 Edge 或 Chrome，并且用独立 profile 启动
-（这样才能拿到调试端口、同时不干扰用户日常浏览）。
-
-### Android 端：webview_flutter + 页面内脚本
-
-系统 WebView，通过 `JavaScriptChannel` 双向通信。注入脚本在
-`onPageStarted` / `onPageFinished` 各跑一次。
-
-手势检测必须在页面内做：`WebViewWidget` 是平台视图，触摸事件由原生消费，
-不进 Flutter 的 `PointerRouter`，外层 `GestureDetector` 一个事件都收不到。
-所以双指横滑返回是在页面里监听 `touchstart/touchmove/touchend` 实现的。
-
-### 同步：局域网直连 + 二维码配对
-
-桌面端起一个 HTTP 服务（固定端口 47321），手机连过来。二维码里是
-`pagereader://pair?host=&port=&code=`，扫一次换长期 token，token 落盘。
-
-冲突策略：**按操作时间取最新**。逐项比较 `updatedAt`，谁动得更晚用谁的状态。
-删除也是动作 —— 删得晚的那端赢。两端最终完全一致。
-
-"对端把书删了"和"对端从来没有这本书"在数据上一样，所以本地维护一份
-**同步快照**（`sync_snapshots` 表）：快照里有、现在没有 = 被删了；
-快照里也没有 = 上次同步后才加的，保留。
 
 ---
 
-## 快速开始
+# 它能做什么
 
-### 直接用（Windows 便携版）
+
+1. Windows 阅读窗口复用 Chrome/Edge 浏览器的 `--app` 作为应用打开，从而获得更好的阅读体验
+2. Android 阅读窗口复用系统 WebView 作为阅读窗口，原因同上，且原本就是网页文档，所以用 WebView 兼容和统一性更好
+3. 文档、教程加入链接，统一管理，进度同步，关掉后，下次打开仍然是同一个地方
+4. 添加的书籍、阅读进度、分组等功能可以多端同步
+
+---
+
+# 快速开始
+
+## 1 直接用（Windows 便携版）
 
 1. 下载 Release 里的 `PageReader-portable-*.zip`
 2. 解压到任意目录，双击 `pagereader.exe`
@@ -73,11 +45,11 @@ Windows 和 Android 两端数据互通，换设备接着读。
 
 需要机器上有 Microsoft Edge 或 Google Chrome。
 
-### 直接用（Android）
+## 2 直接用（Android）
 
 下载 Release 里的 `PageReader-android-*.apk` 安装。要求 **Android 8.0+**。
 
-### 从源码构建
+## 3 从源码构建
 
 需要 Flutter 3.47+ / Dart 3.13+。
 
@@ -93,8 +65,7 @@ flutter build windows --release
 flutter build apk --release
 ```
 
-桌面端构建前需要生成数据库代码（`lib/data/db/app_database.g.dart` 已随仓库提供，
-改了表结构才需要重跑）：
+桌面端构建前需要生成数据库代码（`lib/data/db/app_database.g.dart` 已随仓库提供，改了表结构才需要重跑）：
 
 ```bash
 dart run build_runner build --delete-conflicting-outputs
@@ -102,7 +73,7 @@ dart run build_runner build --delete-conflicting-outputs
 
 ---
 
-## 项目结构
+# 项目结构
 
 ```
 lib/
@@ -129,7 +100,7 @@ lib/
 
 ---
 
-## 测试
+# 测试
 
 ```bash
 flutter test                          # 271 项单元 + 集成测试
@@ -138,25 +109,23 @@ dart run tool/verify_sync.dart        # 同步服务协议验证
 ```
 
 `verify_all.dart` 会启动真实浏览器、打开真书、滚动、关窗、重开，
-校验进度是否精确恢复。它跑在 `.verify-data/` 沙箱里，
-**不碰你的真实书架数据**。
+校验进度是否精确恢复。它跑在 `.verify-data/` 沙箱里，**不碰你的真实书架数据**。
 
 ---
 
-## 已知限制
+# 已知限制
 
-| 限制 | 原因 |
-|---|---|
-| 桌面端依赖 Edge/Chrome | 用的是外部浏览器 + CDP，不是内嵌内核 |
-| 部分设备打开书黑屏 | 详见下方 |
-| Android 网页不跟随 app 深浅色 | WebView 没有引擎级的媒体查询覆盖 API |
-| 阅读页无浏览器插件 | 独立 profile 下插件会弹欢迎页；用日常 profile 又拿不到 CDP 端口。取舍是保住进度记录 |
+| 限制                    | 原因                                                    |
+| --------------------- | ----------------------------------------------------- |
+| 桌面端依赖 Edge/Chrome     | 用的是外部浏览器 + CDP，不是内嵌内核                                 |
+| 部分设备打开书黑屏             | 详见下方                                                  |
+| Android 网页不跟随 app 深浅色 | WebView 没有引擎级的媒体查询覆盖 API                              |
+| 阅读页无浏览器插件             | 独立 profile 下插件会弹欢迎页；用日常 profile 又拿不到 CDP 端口。取舍是保住进度记录 |
 
-### 关于在部分华为设备上黑屏
+# 关于在部分华为设备上黑屏
 
-荣耀 KRJ-W09（Android 10，华为自研 WebView Chromium 83）上打开书是全黑。
-同样的 APK 在小米 MI PAD 4 PLUS（Android 8.1，Google 官方 WebView Chromium 68）
-上完全正常 —— 系统更老、内核更旧的那台反而跑得起来。
++ 华为（Android 10，华为自研 WebView Chromium 83）上打开书是全黑
++ 小米（Android 8.1，Google 官方 WebView Chromium 68）上完全正常
 
 日志显示是 GPU 缓冲区拿不到：
 
@@ -166,15 +135,13 @@ mali_winsys: new_window_surface(...) returns 0x3000
 OpenGLRenderer: dequeueBuffer failed, error = -110
 ```
 
-关 Impeller、给 WebView 设软件层都试过，只能做到"能显示但掉帧 78~99%"，
-而且同一份 APK 两次结果不一致。这台设备的 WebView 也无法升级
-（无 GMS、无 Chrome、Fallback 默认关闭、bootloader 锁死）。
+关 Impeller、给 WebView 设软件层都试过，只能做到"能显示但掉帧 78~99%"，而且同一份 APK 两次结果不一致。这台设备的 WebView 也无法升级（无 GMS、无 Chrome、Fallback 默认关闭、bootloader 锁死）。
 
 结论：不是应用的问题，是那套 WebView + gralloc 组合的兼容性。不做妥协性适配。
 
 ---
 
-## 数据在哪
+# 数据存储位置
 
 | 平台 | 位置 |
 |---|---|
@@ -188,15 +155,6 @@ OpenGLRenderer: dequeueBuffer failed, error = -110
 
 ---
 
-## 开发说明
-
-`DECISIONS.md` 是决策台账，记录"为什么这样选"，以及在哪些方案上碰过壁。
-`TODO.md` 记录待办、已知取舍、以及已修问题的根因。
-
-改代码前建议先看这两份 —— 很多看起来"可以优化"的地方，其实是被具体约束逼出来的。
-
----
-
-## 许可
+# 许可
 
 MIT
