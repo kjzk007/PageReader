@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -136,6 +137,24 @@ final engineProvider = FutureProvider<WebEngine?>((ref) async {
     userDataDir: userDataDir.path,
     extensionPaths: enabled,
   );
+
+  // 首帧就把主题告诉原生侧。
+  //
+  // 不能只靠 PageReaderApp.build 里的同步：那时 engine 还在创建中，
+  // `ref.read(engineProvider).value` 是 null，回调什么都不会做 ——
+  // 结果就是第一次打开的书仍然是白边，只有切换主题后才正确。
+  //
+  // system 档在这里用 PlatformDispatcher 的平台亮度判断，
+  // 不需要 BuildContext。
+  final themeMode = ref.read(themeModeProvider);
+  final dark = switch (themeMode) {
+    ThemeMode.dark => true,
+    ThemeMode.light => false,
+    ThemeMode.system =>
+      PlatformDispatcher.instance.platformBrightness == Brightness.dark,
+  };
+  unawaited(engine.setDarkMode(dark));
+
   ref.onDispose(engine.shutdown);
   return engine;
 });
@@ -357,6 +376,25 @@ class PageReaderApp extends ConsumerWidget {
     //   2. WebView 报告给站点的 prefers-color-scheme
     //      —— 见 android 端 setThemeMode 的说明
     final mode = ref.watch(themeModeProvider);
+
+    // 桌面端阅读窗口是独立 Win32 窗口，不继承 Flutter 主题：
+    // 标题栏默认跟系统、客户区默认是白色。把实际生效的亮度传给它，
+    // 否则深色 app 里那圈白边很刺眼。
+    //
+    // 这里也处理 system 档：平台亮度变化会重建本 widget，
+    // 于是会重新同步一次。setDarkMode 内部有去重，开销可忽略。
+    final platformDark = switch (mode) {
+      ThemeMode.dark => true,
+      ThemeMode.light => false,
+      ThemeMode.system =>
+        MediaQuery.maybePlatformBrightnessOf(context) == Brightness.dark,
+    };
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final engine = ref.read(engineProvider).value;
+      if (engine is WebView2Engine) {
+        engine.setDarkMode(platformDark);
+      }
+    });
 
     return MaterialApp(
       title: 'PageReader',

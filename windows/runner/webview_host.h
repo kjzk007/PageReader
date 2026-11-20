@@ -101,6 +101,17 @@ class WebViewHost {
   // __prReport bridge). Must be set before the first OpenBook.
   void SetPageBridge(const std::string& script);
 
+  // Applies the app's current theme to reading windows.
+  //
+  // Reading windows are plain Win32 windows, so they do not inherit anything
+  // from Flutter: without this, the title bar follows the *system* theme and
+  // the client area uses COLOR_WINDOW (white on light systems). On a dark app
+  // theme that shows up as a bright frame around the page.
+  //
+  // Called from Dart when the theme changes and once before the first
+  // OpenBook, so newly created windows are correct from the start.
+  void SetDarkMode(bool dark);
+
  private:
   // Window procedure for reading windows: reports close events to Dart.
   static LRESULT CALLBACK ReadingWindowProc(HWND hwnd, UINT msg,
@@ -109,6 +120,17 @@ class WebViewHost {
   void EnsureEnvironment(std::function<void(bool, const std::string&)> done);
   void CreateSession(const std::string& book_id, const std::string& url,
                      ResultFn done);
+
+  // Paints the dark/light title bar and background brush on one window.
+  void ApplyThemeToWindow(HWND hwnd);
+
+  // Background brush for the current theme. Owned by this object (the window
+  // class only borrows it, and the class outlives individual windows).
+  HBRUSH background_brush_ = nullptr;
+
+  // Current app theme. Defaults to dark: the app's own chrome is dark unless
+  // the user picks otherwise.
+  bool dark_mode_ = true;
 
   void* messenger_ = nullptr;
   // Real type is flutter::BinaryMessengerImpl. Kept as void* so this header

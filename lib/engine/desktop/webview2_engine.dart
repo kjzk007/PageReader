@@ -183,6 +183,36 @@ class WebView2Engine implements WebEngine {
     }
   }
 
+  /// 把 app 当前的主题（深色/浅色）告诉原生侧。
+  ///
+  /// ── 为什么需要 ──
+  ///
+  /// 阅读窗口是普通 Win32 窗口，不继承 Flutter 的任何东西：
+  /// 标题栏跟系统主题、客户区用 COLOR_WINDOW（浅色系统上是白色）。
+  /// 所以 app 用深色主题时，页面四周会有一圈刺眼的白边。
+  ///
+  /// 主题切换时也要调用，已打开的窗口会立刻跟着变。
+  ///
+  /// ── 注意通道可能还没就绪 ──
+  ///
+  /// engineProvider 在首帧之前就创建了本对象，而原生侧的 method channel
+  /// 要等 WM_APP+1 才注册。所以这里的调用可能抛 MissingPluginException，
+  /// 不能因此丢掉设置 —— 值已经记在 _darkMode 里，_ensureInit 会补发。
+  Future<void> setDarkMode(bool dark) async {
+    final changed = _darkMode != dark;
+    _darkMode = dark;
+    if (!changed) return;
+    try {
+      await _channel.invokeMethod<void>('setDarkMode', {'dark': dark});
+      _diag('setDarkMode: $dark');
+    } catch (_) {
+      // 通道未就绪，等 _ensureInit 补发。
+    }
+  }
+
+  /// 当前记录的主题，避免重复下发。
+  bool? _darkMode;
+
   /// 初始化通道和插件。
   ///
   /// 必须在第一次 launch 之前完成 —— user data 目录一旦确定
@@ -233,6 +263,20 @@ class WebView2Engine implements WebEngine {
         _diag('init: pending extensions ${extensionPaths.length}');
       } catch (e) {
         _diag('init: setPendingExtensions failed $e');
+      }
+    }
+
+    // 补发主题。
+    //
+    // engineProvider 在通道就绪前就调过 setDarkMode，那次会失败；
+    // 值记在 _darkMode 里，这里补上，保证第一次打开的书就是正确配色。
+    final dark = _darkMode;
+    if (dark != null) {
+      try {
+        await _channel.invokeMethod<void>('setDarkMode', {'dark': dark});
+        _diag('init: applied theme dark=$dark');
+      } catch (e) {
+        _diag('init: setDarkMode failed $e');
       }
     }
   }

@@ -1,5 +1,7 @@
 #include "webview_host.h"
 
+#include <dwmapi.h>
+
 #include <flutter/encodable_value.h>
 #include <flutter/method_channel.h>
 #include <flutter/plugin_registrar_windows.h>
@@ -14,6 +16,18 @@
 namespace pagereader {
 
 namespace {
+
+// Keep in sync with lib/main.dart `_buildTheme`:
+//   dark  scaffoldBackgroundColor = 0xFF0E0F12
+//   light scaffoldBackgroundColor = 0xFFF7F8FA
+// COLORREF is 0x00BBGGRR, so the byte order is reversed relative to the
+// Flutter ARGB constant.
+constexpr COLORREF kDarkBackground = RGB(0x0E, 0x0F, 0x12);
+constexpr COLORREF kLightBackground = RGB(0xF7, 0xF8, 0xFA);
+
+// DWMWA_USE_IMMERSIVE_DARK_MODE. Defined here because the SDK headers that
+// ship with older Windows SDKs do not expose it.
+constexpr DWORD kAttrUseImmersiveDarkMode = 20;
 
 // Diagnostic log, written next to the app's data folder.
 //
@@ -156,6 +170,18 @@ void WebViewHost::Attach(void* messenger_ref) {
           ok_fn();
           return;
         }
+        if (m == "setDarkMode") {
+          bool dark = true;
+          if (args) {
+            auto it = args->find(flutter::EncodableValue("dark"));
+            if (it != args->end()) {
+              if (const auto* b = std::get_if<bool>(&it->second)) dark = *b;
+            }
+          }
+          SetDarkMode(dark);
+          ok_fn();
+          return;
+        }
         if (m == "setPendingExtensions") {
           std::vector<std::string> paths;
           if (args) {
@@ -255,6 +281,38 @@ void WebViewHost::SetClosedSink(
 
 void WebViewHost::SetPageBridge(const std::string& script) {
   page_bridge_ = script;
+}
+
+void WebViewHost::ApplyThemeToWindow(HWND hwnd) {
+  if (!hwnd) return;
+
+  BOOL use_dark = dark_mode_ ? TRUE : FALSE;
+  ::DwmSetWindowAttribute(hwnd, kAttrUseImmersiveDarkMode, &use_dark,
+                          sizeof(use_dark));
+
+  // Repaint so the new brush takes effect immediately (theme switches while
+  // a book is already open).
+  ::InvalidateRect(hwnd, nullptr, TRUE);
+}
+
+void WebViewHost::SetDarkMode(bool dark) {
+  if (dark_mode_ == dark && background_brush_ != nullptr) return;
+  dark_mode_ = dark;
+
+  // Rebuild the shared background brush. It is used by ReadingWindowProc when
+  // erasing the window background, so swapping it here plus InvalidateRect is
+  // enough to repaint every open reading window.
+  if (background_brush_ != nullptr) {
+    ::DeleteObject(background_brush_);
+  }
+  background_brush_ =
+      ::CreateSolidBrush(dark ? kDarkBackground : kLightBackground);
+
+  dbg(dark ? "SetDarkMode: dark" : "SetDarkMode: light");
+
+  for (auto& entry : sessions_) {
+    ApplyThemeToWindow(entry.second->hwnd);
+  }
 }
 
 void WebViewHost::MarkSessionClosing(const std::string& book_id) {
@@ -415,6 +473,22 @@ LRESULT CALLBACK WebViewHost::ReadingWindowProc(HWND hwnd, UINT msg,
         dbg("WM_CLOSE: capture started, window kept alive");
       }
       return 0;
+    }
+    return 0;
+  }
+  if (msg == WM_ERASEBKGND) {
+    // Paint with the app theme instead of the system default.
+    //
+    // The class is registered with hbrBackground = nullptr, so without this
+    // the window shows whatever was underneath (typically white) around the
+    // WebView until the page paints.
+    auto* host = reinterpret_cast<WebViewHost*>(
+        ::GetPropW(hwnd, L"PageReaderHost"));
+    if (host != nullptr && host->background_brush_ != nullptr) {
+      RECT rc;
+      ::GetClientRect(hwnd, &rc);
+      ::FillRect(reinterpret_cast<HDC>(wparam), &rc, host->background_brush_);
+      return 1;
     }
     return 0;
   }
@@ -581,7 +655,10 @@ void WebViewHost::CreateSession(const std::string& book_id,
     wc.hInstance = inst;
     wc.lpszClassName = kClass;
     wc.hCursor = ::LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    // No background brush: ReadingWindowProc paints it in WM_ERASEBKGND so
+    // the colour can follow the app theme instead of the system one.
+    // COLOR_WINDOW here was what made reading windows flash white.
+    wc.hbrBackground = nullptr;
     ::RegisterClassEx(&wc);
     registered = true;
   }
@@ -599,6 +676,14 @@ void WebViewHost::CreateSession(const std::string& book_id,
   ::SetPropW(hwnd, L"PageReaderBookId",
              reinterpret_cast<HANDLE>(new std::string(book_id)));
   ::SetPropW(hwnd, L"PageReaderHost", reinterpret_cast<HANDLE>(this));
+
+  // Paint the window with the app theme before it becomes visible, otherwise
+  // the first frame flashes a light frame on a dark app theme.
+  if (background_brush_ == nullptr) {
+    background_brush_ =
+        ::CreateSolidBrush(dark_mode_ ? kDarkBackground : kLightBackground);
+  }
+  ApplyThemeToWindow(hwnd);
 
   next_host_x_ += 40;
   next_host_y_ += 40;

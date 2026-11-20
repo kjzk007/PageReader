@@ -73,5 +73,22 @@ android/app/.cxx/
 # 本地部署验证目录（构建产物，不进仓库）
 portable-test/
 test-run/
+
+# 便携版运行文件
+#
+# 把发布包解压到源码目录试用时，这些文件会落在仓库根目录。
+# 带前导斜杠，只匹配根目录，不会影响 windows/webview2/x64/ 里的 SDK 文件。
+/pagereader.exe
+/*.dll
+/data/
+/native_assets.json
+/使用说明.txt
+
+# 构建环境与本地备份
+#
+# _buildshim 是绕过 vswhere 检测问题用的临时 VS 工具链桩；
+# _backup-* 是替换可执行文件前的手工备份。都不属于项目。
+/_buildshim/
+/_backup-*/
 # 打包产物（走 GitHub Release，不进仓库）
 _pkg/
