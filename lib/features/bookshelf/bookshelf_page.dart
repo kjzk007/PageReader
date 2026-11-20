@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 
-import '../../core/domain/dark_preset.dart';
+import '../../core/domain/theme_preset.dart';
 import '../../core/domain/models.dart';
 import '../../core/ports/ports.dart';
 import '../../core/services/progress_recorder.dart';
@@ -19,6 +19,7 @@ import '../reader/reader_page.dart';
 import '../sync/sync_desktop_page.dart';
 import '../sync/sync_phone_page.dart';
 import '../settings/settings_page.dart';
+import '../settings/theme_preset_section.dart';
 import '../diagnostics/diagnostics_page.dart';
 import '../../core/domain/chapter_extractor.dart';
 import '../../core/services/icon_fetcher.dart';
@@ -282,10 +283,10 @@ class _BookshelfPageState extends State<BookshelfPage> {
       // 按这本书绑定的预设决定要不要注入深色样式。
       // presetId 为空 = 「默认」，不注入任何东西，网页原样。
       if (engine is WebView2Engine) {
-        DarkPreset? preset;
+        ThemePreset? preset;
         try {
           preset = container
-              ?.read(darkPresetsProvider.notifier)
+              ?.read(themePresetsProvider.notifier)
               .byId(book.presetId);
         } catch (_) {
           preset = null;
@@ -932,6 +933,12 @@ class _BookshelfPageState extends State<BookshelfPage> {
   ///      写成 right=0 等于告诉 Flutter「右边一直延伸到屏幕边缘」,
   ///      于是它总往右靠。正确做法是用 Overlay 的真实尺寸算出
   ///      "光标左侧还剩多少、右侧还剩多少"。
+  /// 菜单里「主题设置」这一项的返回值前缀。
+  /// 菜单里「主题设置」这一项的返回值前缀。
+  /// 值形如 preset:加预设id，表示用户选了某个主题；空 id 表示改回默认。
+  /// 改回默认（不注入）。用前缀而不是单独值，是为了让 switch 保持扁平。
+  static const _kPresetMenuValue = 'preset:';
+
   Future<void> _showBookMenu(Book book, Offset position) async {
     const itemStyle = TextStyle(
       color: Color(0xFFE3E5E8),
@@ -985,11 +992,15 @@ class _BookshelfPageState extends State<BookshelfPage> {
           height: 40,
           child: const Text('移动到分类', style: itemStyle),
         ),
-          PopupMenuItem(
-            value: 'preset',
-            height: 40,
-            child: const Text('深色注入', style: itemStyle),
-          ),
+        // 「主题设置」用悬停展开的子菜单，而不是二级弹窗。
+        //
+        // 右键菜单里再弹对话框会打断操作节奏；子菜单能把
+        // 「有哪几套主题、当前用的是哪套」一次摊开看清楚。
+        PopupMenuItem(
+          value: _kPresetMenuValue,
+          height: 40,
+          child: const _PresetMenuLabel(),
+        ),
           PopupMenuItem(
           value: 'copy',
           height: 40,
@@ -1040,24 +1051,21 @@ class _BookshelfPageState extends State<BookshelfPage> {
           _copyBook(book, scopePrefix: scope.trim(), updatedAt: DateTime.now()),
         );
         await _reload();
-        case 'preset':
-          final choice = await _pickDarkPreset(book);
-          if (choice == null) return;
-          await widget.store.upsertBook(
-            _copyBook(
-              book,
-              presetId: choice == _kDefaultPreset ? null : choice,
-              clearPreset: choice == _kDefaultPreset,
-              updatedAt: DateTime.now(),
-            ),
-          );
-          await _reload();
-          if (!mounted) return;
-          _toast(
-            choice == _kDefaultPreset
-                ? '已改为不注入'
-                : '已绑定深色预设',
-          );
+      case _kPresetMenuValue:
+        final picked = await _showPresetSubmenu(book, position);
+        if (picked == null) return;
+        final isDefault = picked == kDefaultPresetId;
+        await widget.store.upsertBook(
+          _copyBook(
+            book,
+            presetId: isDefault ? null : picked,
+            clearPreset: isDefault,
+            updatedAt: DateTime.now(),
+          ),
+        );
+        await _reload();
+        if (!mounted) return;
+        _toast(isDefault ? '已改为默认（不注入）' : '已应用主题');
       case 'copy':
         await Clipboard.setData(ClipboardData(text: book.entryUrl));
         if (!mounted) return;
@@ -1075,79 +1083,76 @@ class _BookshelfPageState extends State<BookshelfPage> {
   }
 
 
-  /// 「默认」的哨兵值：表示这本书不注入任何样式。
-  static const _kDefaultPreset = '__default__';
-
-  /// 选一个深色注入预设绑定到这本书。
+  /// 主题选择子菜单。
   ///
-  /// 返回预设 id，或 _kDefaultPreset（不注入），用户取消时返回 null。
-  Future<String?> _pickDarkPreset(Book book) async {
+  /// Flutter 的 showMenu 不支持「悬停展开二级菜单」，这里在父菜单右侧
+  /// 再开一层 —— 比弹对话框轻，也比让用户先进设置页改再回来快。
+  ///
+  /// 返回预设 id 或 [kDefaultPresetId]；点空白处取消返回 null。
+  Future<String?> _showPresetSubmenu(Book book, Offset position) async {
     final presets = ProviderScope.containerOf(
       context,
-    ).read(darkPresetsProvider);
+    ).read(themePresetsProvider);
     const labelStyle = TextStyle(
       color: Color(0xFFE3E5E8),
       fontSize: 13,
       fontFamily: 'Microsoft YaHei',
     );
-    final current = book.presetId;
-    return showDialog<String>(
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    // 贴在父菜单右侧展开：父菜单宽约 168，这里再往右让出一点。
+    final rect = RelativeRect.fromRect(
+      Rect.fromLTWH(position.dx + 156, position.dy + 18, 0, 0),
+      Offset.zero & overlay.size,
+    );
+
+    Widget row(String text, bool selected, {Color? swatch}) => Row(
+      children: [
+        Container(
+          width: 14,
+          height: 14,
+          decoration: BoxDecoration(
+            color: swatch ?? const Color(0xFF2C3038),
+            borderRadius: BorderRadius.circular(3),
+            border: Border.all(color: const Color(0xFF3A3F47)),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(child: Text(text, style: labelStyle)),
+        if (selected)
+          const Icon(Icons.check, size: 15, color: Color(0xFF5AC8FA)),
+      ],
+    );
+
+    return showMenu<String>(
       context: context,
-      builder: (ctx) => SimpleDialog(
-        backgroundColor: const Color(0xFF1C1E22),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-          side: const BorderSide(color: Color(0xFF3A3F47)),
-        ),
-        title: const Text(
-          '深色注入',
-          style: TextStyle(
-            color: Color(0xFFE3E5E8),
-            fontSize: 15,
-            fontFamily: 'Microsoft YaHei',
-          ),
-        ),
-        children: [
-          SimpleDialogOption(
-            onPressed: () => Navigator.of(ctx).pop(_kDefaultPreset),
-            child: Row(
-              children: [
-                Icon(
-                  current == null
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_unchecked,
-                  size: 16,
-                  color: const Color(0xFF5AC8FA),
-                ),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text('默认（不注入）', style: labelStyle),
-                ),
-              ],
-            ),
-          ),
-          for (final p in presets)
-            SimpleDialogOption(
-              onPressed: () => Navigator.of(ctx).pop(p.id),
-              child: Row(
-                children: [
-                  Icon(
-                    current == p.id
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_unchecked,
-                    size: 16,
-                    color: const Color(0xFF5AC8FA),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(p.name, style: labelStyle)),
-                ],
-              ),
-            ),
-        ],
+      position: rect,
+      color: const Color(0xFF1C1E22),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(6),
+        side: const BorderSide(color: Color(0xFF3A3F47), width: 1),
       ),
+      constraints: const BoxConstraints(minWidth: 190),
+      items: [
+        PopupMenuItem(
+          value: kDefaultPresetId,
+          height: 40,
+          child: row('默认（不注入）', book.presetId == null),
+        ),
+        const PopupMenuDivider(),
+        for (final p in presets)
+          PopupMenuItem(
+            value: p.id,
+            height: 40,
+            child: row(
+              p.name,
+              book.presetId == p.id,
+              swatch: Color(p.backgroundArgb),
+            ),
+          ),
+      ],
     );
   }
-
   Book _copyBook(
     Book b, {
     String? title,
@@ -1815,6 +1820,32 @@ class _MoveOption extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+/// 右键菜单里「主题设置」那一项。
+///
+/// 该项本身不执行动作，只是把鼠标悬停变成展开子菜单的信号 ——
+/// 见 _showBookMenu 里对 _kPresetMenuValue 的处理。
+class _PresetMenuLabel extends StatelessWidget {
+  const _PresetMenuLabel();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Expanded(
+          child: Text(
+            '主题设置',
+            style: TextStyle(
+              color: Color(0xFFE3E5E8),
+              fontSize: 13,
+              fontFamily: 'Microsoft YaHei',
+            ),
+          ),
+        ),
+        const Icon(Icons.chevron_right, size: 16, color: Color(0xFF8A9099)),
+      ],
     );
   }
 }

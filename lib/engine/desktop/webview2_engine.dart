@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 
 import '../../core/domain/anchor_script.dart';
-import '../../core/domain/dark_preset.dart';
+import '../../core/domain/theme_preset.dart';
 import '../../core/domain/models.dart';
 import '../../core/ports/ports.dart';
 
@@ -220,14 +220,14 @@ class WebView2Engine implements WebEngine {
   String? _darkEngineJs;
 
   /// 当前这本书要用的深色预设；null 表示不注入。
-  DarkPreset? _activePreset;
+  ThemePreset? _activePreset;
 
   /// 设定下一次 openBook 使用的深色预设。
   ///
   /// 不在这里直接注入，而是等 openBook 时拼进桥接脚本：
   /// 桥接脚本通过 AddScriptToExecuteOnDocumentCreated 注入，
   /// 对每个新文档都会执行，所以书内跳转也能保持一致。
-  void setActivePreset(DarkPreset? preset) {
+  void setActivePreset(ThemePreset? preset) {
     _activePreset = preset;
   }
 
@@ -661,7 +661,7 @@ $darkBlock
     // 正式的预设绑定（书架右键）已经接上，这里只用于自动化验收。
     if (_activePreset == null &&
         Platform.environment['PAGEREADER_DARK_PRESET'] == '1') {
-      _activePreset = DarkPreset.night;
+      _activePreset = ThemePreset.builtinDark;
     }
     await _loadDarkEngine();
     // 必须在预设确定之后下发底色，否则会按「不注入」发白色。

@@ -23,7 +23,8 @@ assets/dark/engine.js     ← 产物，应用运行时加载的就是它
 
 | 脚本 | 作用 |
 |---|---|
-| `_names.json` | 要提取的函数/对象/变量名清单 |
+| `_names.json` | 要提取的函数/对象名清单 |
+| `_vars.json` | 要提取的顶层变量清单（缓存、颜色表、正则） |
 | `_extract.js` | 按名字切函数（含参数解构、正则字面量的正确配平） |
 | `_extract_vars.js` | 切顶层 const/let/var（缓存、颜色表、正则等） |
 | `_scan_missing.js` | 扫描算法体里引用、但还没提取的顶层声明 |
@@ -40,7 +41,7 @@ $src = '<解包目录>\inject\index.js'
 node tool/dark_engine/_extract.js $src tool/dark_engine/_names.json _extract.json
 
 # 2. 提取顶层变量（清单会随版本变化，先用 _scan_missing 找缺的）
-node tool/dark_engine/_extract_vars.js $src _missing2.json _extract_vars.json
+node tool/dark_engine/_extract_vars.js $src tool/dark_engine/_vars.json _extract_vars.json
 
 # 3. 合并 + 依赖检查（会打印仍缺的声明）
 $env:DR_SRC = $src
@@ -50,7 +51,7 @@ node tool/dark_engine/_merge.js
 node tool/dark_engine/_build_engine.js
 ```
 
-第 3 步打印"仍缺的源文件声明"时，把缺的名字补进 `_missing2.json` 再跑第 2 步，
+第 3 步打印"仍缺的源文件声明"时，把缺的名字补进 `tool/dark_engine/_vars.json` 再跑第 2 步，
 直到只剩参数名之类的误报（`theme`、`forEach`）。
 
 ## 排查经验

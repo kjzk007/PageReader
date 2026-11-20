@@ -2280,8 +2280,10 @@
   var PRESET = window.__PR_DARK_PRESET;
   if (!PRESET || PRESET.enabled !== true) return;
 
+  // mode 1 = 深色方案，0 = 浅色方案。
+  // 由预设的底色明暗决定，用户不需要理解这个机制。
   var THEME = {
-    mode: 1,
+    mode: PRESET.mode == null ? 1 : PRESET.mode,
     brightness: PRESET.brightness == null ? 100 : PRESET.brightness,
     contrast: PRESET.contrast == null ? 100 : PRESET.contrast,
     grayscale: PRESET.grayscale == null ? 0 : PRESET.grayscale,
