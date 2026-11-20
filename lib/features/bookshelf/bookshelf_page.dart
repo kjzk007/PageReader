@@ -6,9 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/domain/dark_preset.dart';
 import '../../core/domain/models.dart';
 import '../../core/ports/ports.dart';
 import '../../core/services/progress_recorder.dart';
+import '../../core/services/settings.dart';
 import '../../engine/desktop/cdp_engine.dart';
 import '../../engine/desktop/webview2_engine.dart';
 import '../settings/extension_onboarding.dart';
@@ -261,10 +263,35 @@ class _BookshelfPageState extends State<BookshelfPage> {
       return;
     }
 
+    if (!mounted) return;
+    _toast('正在打开《${book.title}》…');
+    // 在第一个 await 之前取容器：后面再碰 context 会触发
+    // "BuildContext across async gaps" 的实现隐患。
+    // 在第一个 await 之前取容器：后面再碰 context 会触发
+    // "BuildContext across async gaps" 的实现隐患。
+    ProviderContainer? container;
+    try {
+      container = ProviderScope.containerOf(context);
+    } catch (_) {
+      // 裸组件树（测试）里没有 ProviderScope，按不注入处理。
+    }
     _toast('正在打开《${book.title}》…');
 
     try {
       final resume = await widget.store.latestProgress(book.id);
+      // 按这本书绑定的预设决定要不要注入深色样式。
+      // presetId 为空 = 「默认」，不注入任何东西，网页原样。
+      if (engine is WebView2Engine) {
+        DarkPreset? preset;
+        try {
+          preset = container
+              ?.read(darkPresetsProvider.notifier)
+              .byId(book.presetId);
+        } catch (_) {
+          preset = null;
+        }
+        engine.setActivePreset(preset);
+      }
       final target = await engine.launch(book, resume: resume);
       if (!mounted) return;
       _toast(
@@ -958,7 +985,12 @@ class _BookshelfPageState extends State<BookshelfPage> {
           height: 40,
           child: const Text('移动到分类', style: itemStyle),
         ),
-        PopupMenuItem(
+          PopupMenuItem(
+            value: 'preset',
+            height: 40,
+            child: const Text('深色注入', style: itemStyle),
+          ),
+          PopupMenuItem(
           value: 'copy',
           height: 40,
           child: const Text('复制地址', style: itemStyle),
@@ -1008,6 +1040,24 @@ class _BookshelfPageState extends State<BookshelfPage> {
           _copyBook(book, scopePrefix: scope.trim(), updatedAt: DateTime.now()),
         );
         await _reload();
+        case 'preset':
+          final choice = await _pickDarkPreset(book);
+          if (choice == null) return;
+          await widget.store.upsertBook(
+            _copyBook(
+              book,
+              presetId: choice == _kDefaultPreset ? null : choice,
+              clearPreset: choice == _kDefaultPreset,
+              updatedAt: DateTime.now(),
+            ),
+          );
+          await _reload();
+          if (!mounted) return;
+          _toast(
+            choice == _kDefaultPreset
+                ? '已改为不注入'
+                : '已绑定深色预设',
+          );
       case 'copy':
         await Clipboard.setData(ClipboardData(text: book.entryUrl));
         if (!mounted) return;
@@ -1025,6 +1075,79 @@ class _BookshelfPageState extends State<BookshelfPage> {
   }
 
 
+  /// 「默认」的哨兵值：表示这本书不注入任何样式。
+  static const _kDefaultPreset = '__default__';
+
+  /// 选一个深色注入预设绑定到这本书。
+  ///
+  /// 返回预设 id，或 _kDefaultPreset（不注入），用户取消时返回 null。
+  Future<String?> _pickDarkPreset(Book book) async {
+    final presets = ProviderScope.containerOf(
+      context,
+    ).read(darkPresetsProvider);
+    const labelStyle = TextStyle(
+      color: Color(0xFFE3E5E8),
+      fontSize: 13,
+      fontFamily: 'Microsoft YaHei',
+    );
+    final current = book.presetId;
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        backgroundColor: const Color(0xFF1C1E22),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: const BorderSide(color: Color(0xFF3A3F47)),
+        ),
+        title: const Text(
+          '深色注入',
+          style: TextStyle(
+            color: Color(0xFFE3E5E8),
+            fontSize: 15,
+            fontFamily: 'Microsoft YaHei',
+          ),
+        ),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(ctx).pop(_kDefaultPreset),
+            child: Row(
+              children: [
+                Icon(
+                  current == null
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  size: 16,
+                  color: const Color(0xFF5AC8FA),
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('默认（不注入）', style: labelStyle),
+                ),
+              ],
+            ),
+          ),
+          for (final p in presets)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(ctx).pop(p.id),
+              child: Row(
+                children: [
+                  Icon(
+                    current == p.id
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    size: 16,
+                    color: const Color(0xFF5AC8FA),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(p.name, style: labelStyle)),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Book _copyBook(
     Book b, {
     String? title,
@@ -1033,6 +1156,8 @@ class _BookshelfPageState extends State<BookshelfPage> {
     String? iconUrl,
     int? themeColor,
     DateTime? updatedAt,
+    String? presetId,
+    bool clearPreset = false,
   }) => Book(
     id: b.id,
     title: title ?? b.title,
@@ -1042,6 +1167,7 @@ class _BookshelfPageState extends State<BookshelfPage> {
     themeColor: themeColor ?? b.themeColor,
     groupId: groupId ?? b.groupId,
     sortIndex: b.sortIndex,
+    presetId: clearPreset ? null : (presetId ?? b.presetId),
     createdAt: b.createdAt,
     updatedAt: updatedAt ?? b.updatedAt,
     deletedAt: b.deletedAt,

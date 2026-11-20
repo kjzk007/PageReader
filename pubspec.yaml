@@ -76,6 +76,7 @@ flutter:
   # 桌面/移动端的应用图标另有专门位置(windows/runner/resources、android mipmap)。
   assets:
     - assets/icon/
+    - assets/dark/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

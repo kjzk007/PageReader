@@ -39,6 +39,7 @@ class Book {
     this.themeColor,
     this.groupId,
     this.sortIndex = 0,
+      this.presetId,
     this.deletedAt,
   });
 
@@ -59,6 +60,9 @@ class Book {
 
   final String? groupId;
   final int sortIndex;
+
+  /// 深色注入预设 id；null 表示「默认」，打开时不注入任何样式。
+  final String? presetId;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -165,3 +169,4 @@ class ProgressSnapshot {
 
   String get key => '$bookId|$url';
 }
+

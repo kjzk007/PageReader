@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/services/settings.dart';
+import 'dark_preset_section.dart';
 import 'extension_section.dart';
 
 /// 设置页。
@@ -54,7 +55,10 @@ class SettingsPage extends ConsumerWidget {
             '网页显示成什么颜色由站点自己决定。',
           ),
           const SizedBox(height: 28),
-          _sectionTitle('浏览器插件'),
+          _sectionTitle('深色注入'),
+      const DarkPresetSection(),
+      const SizedBox(height: 8),
+      _sectionTitle('浏览器插件'),
           const ExtensionSection(),
           const SizedBox(height: 28),
           _sectionTitle('关于'),

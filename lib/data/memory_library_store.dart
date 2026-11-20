@@ -21,14 +21,16 @@ class MemoryLibraryStore implements LibraryStore {
       String scope,
       int color,
       String? groupId,
-      int order,
-    ) => Book(
+      int order, [
+      String? presetId,
+    ]) => Book(
       id: id,
       title: title,
       entryUrl: entry,
       scopePrefix: scope,
       themeColor: color,
       groupId: groupId,
+      presetId: presetId,
       sortIndex: order,
       createdAt: now.subtract(Duration(days: order * 3)),
       updatedAt: now.subtract(Duration(hours: order * 5)),

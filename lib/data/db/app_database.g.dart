@@ -93,6 +93,17 @@ class $BooksTable extends Books with TableInfo<$BooksTable, BookRow> {
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _presetIdMeta = const VerificationMeta(
+    'presetId',
+  );
+  @override
+  late final GeneratedColumn<String> presetId = GeneratedColumn<String>(
+    'preset_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -136,6 +147,7 @@ class $BooksTable extends Books with TableInfo<$BooksTable, BookRow> {
     themeColor,
     groupId,
     sortIndex,
+    presetId,
     createdAt,
     updatedAt,
     deletedAt,
@@ -208,6 +220,12 @@ class $BooksTable extends Books with TableInfo<$BooksTable, BookRow> {
         sortIndex.isAcceptableOrUnknown(data['sort_index']!, _sortIndexMeta),
       );
     }
+    if (data.containsKey('preset_id')) {
+      context.handle(
+        _presetIdMeta,
+        presetId.isAcceptableOrUnknown(data['preset_id']!, _presetIdMeta),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -271,6 +289,10 @@ class $BooksTable extends Books with TableInfo<$BooksTable, BookRow> {
         DriftSqlType.int,
         data['${effectivePrefix}sort_index'],
       )!,
+      presetId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}preset_id'],
+      ),
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -301,6 +323,11 @@ class BookRow extends DataClass implements Insertable<BookRow> {
   final int? themeColor;
   final String? groupId;
   final int sortIndex;
+
+  /// 这本书打开时使用的深色注入预设 id。
+  ///
+  /// null 表示「默认」—— 不注入任何样式，网页原样显示。
+  final String? presetId;
   final DateTime createdAt;
   final DateTime updatedAt;
   final DateTime? deletedAt;
@@ -313,6 +340,7 @@ class BookRow extends DataClass implements Insertable<BookRow> {
     this.themeColor,
     this.groupId,
     required this.sortIndex,
+    this.presetId,
     required this.createdAt,
     required this.updatedAt,
     this.deletedAt,
@@ -334,6 +362,9 @@ class BookRow extends DataClass implements Insertable<BookRow> {
       map['group_id'] = Variable<String>(groupId);
     }
     map['sort_index'] = Variable<int>(sortIndex);
+    if (!nullToAbsent || presetId != null) {
+      map['preset_id'] = Variable<String>(presetId);
+    }
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     if (!nullToAbsent || deletedAt != null) {
@@ -358,6 +389,9 @@ class BookRow extends DataClass implements Insertable<BookRow> {
           ? const Value.absent()
           : Value(groupId),
       sortIndex: Value(sortIndex),
+      presetId: presetId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(presetId),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
       deletedAt: deletedAt == null && nullToAbsent
@@ -380,6 +414,7 @@ class BookRow extends DataClass implements Insertable<BookRow> {
       themeColor: serializer.fromJson<int?>(json['themeColor']),
       groupId: serializer.fromJson<String?>(json['groupId']),
       sortIndex: serializer.fromJson<int>(json['sortIndex']),
+      presetId: serializer.fromJson<String?>(json['presetId']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
       deletedAt: serializer.fromJson<DateTime?>(json['deletedAt']),
@@ -397,6 +432,7 @@ class BookRow extends DataClass implements Insertable<BookRow> {
       'themeColor': serializer.toJson<int?>(themeColor),
       'groupId': serializer.toJson<String?>(groupId),
       'sortIndex': serializer.toJson<int>(sortIndex),
+      'presetId': serializer.toJson<String?>(presetId),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
       'deletedAt': serializer.toJson<DateTime?>(deletedAt),
@@ -412,6 +448,7 @@ class BookRow extends DataClass implements Insertable<BookRow> {
     Value<int?> themeColor = const Value.absent(),
     Value<String?> groupId = const Value.absent(),
     int? sortIndex,
+    Value<String?> presetId = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
     Value<DateTime?> deletedAt = const Value.absent(),
@@ -424,6 +461,7 @@ class BookRow extends DataClass implements Insertable<BookRow> {
     themeColor: themeColor.present ? themeColor.value : this.themeColor,
     groupId: groupId.present ? groupId.value : this.groupId,
     sortIndex: sortIndex ?? this.sortIndex,
+    presetId: presetId.present ? presetId.value : this.presetId,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
     deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
@@ -442,6 +480,7 @@ class BookRow extends DataClass implements Insertable<BookRow> {
           : this.themeColor,
       groupId: data.groupId.present ? data.groupId.value : this.groupId,
       sortIndex: data.sortIndex.present ? data.sortIndex.value : this.sortIndex,
+      presetId: data.presetId.present ? data.presetId.value : this.presetId,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
@@ -459,6 +498,7 @@ class BookRow extends DataClass implements Insertable<BookRow> {
           ..write('themeColor: $themeColor, ')
           ..write('groupId: $groupId, ')
           ..write('sortIndex: $sortIndex, ')
+          ..write('presetId: $presetId, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('deletedAt: $deletedAt')
@@ -476,6 +516,7 @@ class BookRow extends DataClass implements Insertable<BookRow> {
     themeColor,
     groupId,
     sortIndex,
+    presetId,
     createdAt,
     updatedAt,
     deletedAt,
@@ -492,6 +533,7 @@ class BookRow extends DataClass implements Insertable<BookRow> {
           other.themeColor == this.themeColor &&
           other.groupId == this.groupId &&
           other.sortIndex == this.sortIndex &&
+          other.presetId == this.presetId &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt &&
           other.deletedAt == this.deletedAt);
@@ -506,6 +548,7 @@ class BooksCompanion extends UpdateCompanion<BookRow> {
   final Value<int?> themeColor;
   final Value<String?> groupId;
   final Value<int> sortIndex;
+  final Value<String?> presetId;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   final Value<DateTime?> deletedAt;
@@ -519,6 +562,7 @@ class BooksCompanion extends UpdateCompanion<BookRow> {
     this.themeColor = const Value.absent(),
     this.groupId = const Value.absent(),
     this.sortIndex = const Value.absent(),
+    this.presetId = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
@@ -533,6 +577,7 @@ class BooksCompanion extends UpdateCompanion<BookRow> {
     this.themeColor = const Value.absent(),
     this.groupId = const Value.absent(),
     this.sortIndex = const Value.absent(),
+    this.presetId = const Value.absent(),
     required DateTime createdAt,
     required DateTime updatedAt,
     this.deletedAt = const Value.absent(),
@@ -552,6 +597,7 @@ class BooksCompanion extends UpdateCompanion<BookRow> {
     Expression<int>? themeColor,
     Expression<String>? groupId,
     Expression<int>? sortIndex,
+    Expression<String>? presetId,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
     Expression<DateTime>? deletedAt,
@@ -566,6 +612,7 @@ class BooksCompanion extends UpdateCompanion<BookRow> {
       if (themeColor != null) 'theme_color': themeColor,
       if (groupId != null) 'group_id': groupId,
       if (sortIndex != null) 'sort_index': sortIndex,
+      if (presetId != null) 'preset_id': presetId,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (deletedAt != null) 'deleted_at': deletedAt,
@@ -582,6 +629,7 @@ class BooksCompanion extends UpdateCompanion<BookRow> {
     Value<int?>? themeColor,
     Value<String?>? groupId,
     Value<int>? sortIndex,
+    Value<String?>? presetId,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
     Value<DateTime?>? deletedAt,
@@ -596,6 +644,7 @@ class BooksCompanion extends UpdateCompanion<BookRow> {
       themeColor: themeColor ?? this.themeColor,
       groupId: groupId ?? this.groupId,
       sortIndex: sortIndex ?? this.sortIndex,
+      presetId: presetId ?? this.presetId,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       deletedAt: deletedAt ?? this.deletedAt,
@@ -630,6 +679,9 @@ class BooksCompanion extends UpdateCompanion<BookRow> {
     if (sortIndex.present) {
       map['sort_index'] = Variable<int>(sortIndex.value);
     }
+    if (presetId.present) {
+      map['preset_id'] = Variable<String>(presetId.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -656,6 +708,7 @@ class BooksCompanion extends UpdateCompanion<BookRow> {
           ..write('themeColor: $themeColor, ')
           ..write('groupId: $groupId, ')
           ..write('sortIndex: $sortIndex, ')
+          ..write('presetId: $presetId, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('deletedAt: $deletedAt, ')
@@ -1733,6 +1786,7 @@ typedef $$BooksTableCreateCompanionBuilder = BooksCompanion Function({
   Value<int?> themeColor,
   Value<String?> groupId,
   Value<int> sortIndex,
+  Value<String?> presetId,
   required DateTime createdAt,
   required DateTime updatedAt,
   Value<DateTime?> deletedAt,
@@ -1747,6 +1801,7 @@ typedef $$BooksTableUpdateCompanionBuilder = BooksCompanion Function({
   Value<int?> themeColor,
   Value<String?> groupId,
   Value<int> sortIndex,
+  Value<String?> presetId,
   Value<DateTime> createdAt,
   Value<DateTime> updatedAt,
   Value<DateTime?> deletedAt,
@@ -1798,6 +1853,11 @@ class $$BooksTableFilterComposer extends Composer<_$AppDatabase, $BooksTable> {
 
   ColumnFilters<int> get sortIndex => $composableBuilder(
     column: $table.sortIndex,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get presetId => $composableBuilder(
+    column: $table.presetId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -1866,6 +1926,11 @@ class $$BooksTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get presetId => $composableBuilder(
+    column: $table.presetId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -1919,6 +1984,9 @@ class $$BooksTableAnnotationComposer
   GeneratedColumn<int> get sortIndex =>
       $composableBuilder(column: $table.sortIndex, builder: (column) => column);
 
+  GeneratedColumn<String> get presetId =>
+      $composableBuilder(column: $table.presetId, builder: (column) => column);
+
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
 
@@ -1965,6 +2033,7 @@ class $$BooksTableTableManager
                 Value<int?> themeColor = const Value.absent(),
                 Value<String?> groupId = const Value.absent(),
                 Value<int> sortIndex = const Value.absent(),
+                Value<String?> presetId = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<DateTime?> deletedAt = const Value.absent(),
@@ -1978,6 +2047,7 @@ class $$BooksTableTableManager
                 themeColor: themeColor,
                 groupId: groupId,
                 sortIndex: sortIndex,
+                presetId: presetId,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 deletedAt: deletedAt,
@@ -1993,6 +2063,7 @@ class $$BooksTableTableManager
                 Value<int?> themeColor = const Value.absent(),
                 Value<String?> groupId = const Value.absent(),
                 Value<int> sortIndex = const Value.absent(),
+                Value<String?> presetId = const Value.absent(),
                 required DateTime createdAt,
                 required DateTime updatedAt,
                 Value<DateTime?> deletedAt = const Value.absent(),
@@ -2006,6 +2077,7 @@ class $$BooksTableTableManager
                 themeColor: themeColor,
                 groupId: groupId,
                 sortIndex: sortIndex,
+                presetId: presetId,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 deletedAt: deletedAt,

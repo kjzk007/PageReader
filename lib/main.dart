@@ -169,6 +169,31 @@ final shelfReloadProvider = Provider<ValueNotifier<int>>((ref) {
   return notifier;
 });
 
+/// 插件配置页开关（开发期验证用）。
+///
+/// 用法：设置环境变量 `PAGEREADER_EXT_PAGE=<扩展ID>/<页面路径>`，
+/// 启动后会直接打开那个扩展页面，用来确认 WebView2 能否导航到
+/// `chrome-extension://` 并让用户在里面改设置。
+///
+/// 临时机制：等正式的「插件设置」入口做完就可以删掉。
+final extensionPageProbeProvider = FutureProvider<void>((ref) async {
+  final raw = _envValue('PAGEREADER_EXT_PAGE');
+  if (raw == null || raw.trim().isEmpty) return;
+  final slash = raw.indexOf('/');
+  if (slash <= 0 || slash == raw.length - 1) return;
+  final extId = raw.substring(0, slash);
+  final page = raw.substring(slash + 1);
+  final engine = await ref.watch(engineProvider.future);
+  if (engine is! WebView2Engine) return;
+  // 原生通道要等首帧之后（WM_APP+1）才注册，这里必须等它。
+  // 正式入口由用户点击触发，不存在这个问题；这个调试入口在启动时跑，
+  // 不加等待会直接抛 MissingPluginException。
+  for (var i = 0; i < 10; i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    if (await engine.openExtensionPage(extId, page)) return;
+  }
+});
+
 /// 启动后给缺底色的书补一次封面底色。
 ///
 /// 两类图标必须用两套规则(实测得出,别合并):
@@ -441,6 +466,8 @@ class _Boot extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final ready = ref.watch(bootstrapProvider);
+    // 开发期验证：设置了 PAGEREADER_EXT_PAGE 就打开那个插件页面。
+    ref.watch(extensionPageProbeProvider);
     return ready.when(
       loading: () => const Scaffold(
         backgroundColor: Color(0xFF0E0F12),

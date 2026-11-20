@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../domain/dark_preset.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -235,4 +236,85 @@ class ExtensionSettingsNotifier extends Notifier<ExtensionSettings> {
 final extensionSettingsProvider =
     NotifierProvider<ExtensionSettingsNotifier, ExtensionSettings>(
       ExtensionSettingsNotifier.new,
+    );
+
+
+/// 深色注入预设的集合。
+///
+/// 存法：整个列表序列化成一个字符串键，避免给 SettingsStore 加一堆
+/// 针对单个预设的读写方法。
+///
+/// 内置预设「深色模式」始终存在，用户删不掉；其余由用户自建。
+class DarkPresetsNotifier extends Notifier<List<DarkPreset>> {
+  static const _key = 'dark.presets';
+
+  @override
+  List<DarkPreset> build() {
+    final store = ref.read(settingsStoreProvider);
+    if (store == null) return const [DarkPreset.night];
+    final raw = store.readString(_key);
+    if (raw.trim().isEmpty) return const [DarkPreset.night];
+    try {
+      final list = jsonDecode(raw);
+      if (list is! List) return const [DarkPreset.night];
+      final presets = list
+          .whereType<Map<String, dynamic>>()
+          .map(DarkPreset.fromJson)
+          .toList();
+      // 内置的不能被删掉，缺了就补回来（比如手工编辑坏了配置）。
+      if (!presets.any((p) => p.id == DarkPreset.night.id)) {
+        presets.insert(0, DarkPreset.night);
+      }
+      return presets;
+    } catch (_) {
+      return const [DarkPreset.night];
+    }
+  }
+
+  /// 找预设；找不到返回 null（书绑定了一个已删除的预设时）。
+  DarkPreset? byId(String? id) {
+    if (id == null || id.isEmpty) return null;
+    for (final p in state) {
+      if (p.id == id) return p;
+    }
+    return null;
+  }
+
+  Future<void> _persist(List<DarkPreset> next) async {
+    state = next;
+    await ref
+        .read(settingsStoreProvider)
+        ?.writeString(_key, jsonEncode(next.map((p) => p.toJson()).toList()));
+  }
+
+  Future<void> upsert(DarkPreset preset) async {
+    final next = [...state];
+    final i = next.indexWhere((p) => p.id == preset.id);
+    if (i >= 0) {
+      next[i] = preset;
+    } else {
+      next.add(preset);
+    }
+    await _persist(next);
+  }
+
+  Future<void> remove(String id) async {
+    if (id == DarkPreset.night.id) return; // 内置不删
+    await _persist(state.where((p) => p.id != id).toList());
+  }
+
+  /// 新建一个预设，返回它（调用方拿 id 去绑定书）。
+  Future<DarkPreset> create(String name) async {
+    final p = DarkPreset(
+      id: 'preset-${DateTime.now().millisecondsSinceEpoch}',
+      name: name.trim().isEmpty ? '未命名预设' : name.trim(),
+    );
+    await upsert(p);
+    return p;
+  }
+}
+
+final darkPresetsProvider =
+    NotifierProvider<DarkPresetsNotifier, List<DarkPreset>>(
+      DarkPresetsNotifier.new,
     );

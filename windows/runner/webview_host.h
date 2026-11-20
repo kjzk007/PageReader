@@ -111,6 +111,11 @@ class WebViewHost {
   // Called from Dart when the theme changes and once before the first
   // OpenBook, so newly created windows are correct from the start.
   void SetDarkMode(bool dark);
+  // Sets the webview surface colour (0xAARRGGBB).
+  //
+  // Called with the active dark preset's background so page loads do not
+  // flash white, and with opaque white when no preset is bound.
+  void SetPageBackground(unsigned int argb);
 
  private:
   // Window procedure for reading windows: reports close events to Dart.
@@ -131,6 +136,8 @@ class WebViewHost {
   // Current app theme. Defaults to dark: the app's own chrome is dark unless
   // the user picks otherwise.
   bool dark_mode_ = true;
+  // WebView2 surface colour; white until a dark preset says otherwise.
+  COREWEBVIEW2_COLOR page_background_ = {255, 255, 255, 255};
 
   void* messenger_ = nullptr;
   // Real type is flutter::BinaryMessengerImpl. Kept as void* so this header

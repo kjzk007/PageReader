@@ -170,7 +170,23 @@ void WebViewHost::Attach(void* messenger_ref) {
           ok_fn();
           return;
         }
-        if (m == "setDarkMode") {
+        if (m == "setPageBackground") {
+          unsigned int argb = 0xFFFFFFFF;
+          if (args) {
+            auto it = args->find(flutter::EncodableValue("argb"));
+            if (it != args->end()) {
+              if (const auto* v = std::get_if<int32_t>(&it->second)) {
+                argb = static_cast<unsigned int>(*v);
+              } else if (const auto* v64 =
+                             std::get_if<int64_t>(&it->second)) {
+                argb = static_cast<unsigned int>(*v64);
+              }
+            }
+          }
+          SetPageBackground(argb);
+          ok_fn();
+          return;
+        }        if (m == "setDarkMode") {
           bool dark = true;
           if (args) {
             auto it = args->find(flutter::EncodableValue("dark"));
@@ -295,6 +311,18 @@ void WebViewHost::ApplyThemeToWindow(HWND hwnd) {
   ::InvalidateRect(hwnd, nullptr, TRUE);
 }
 
+void WebViewHost::SetPageBackground(unsigned int argb) {
+  page_background_.A = static_cast<BYTE>((argb >> 24) & 0xFF);
+  page_background_.R = static_cast<BYTE>((argb >> 16) & 0xFF);
+  page_background_.G = static_cast<BYTE>((argb >> 8) & 0xFF);
+  page_background_.B = static_cast<BYTE>(argb & 0xFF);
+  {
+    char buf[96];
+    sprintf_s(buf, "SetPageBackground: a=%u rgb=%u,%u,%u", page_background_.A,
+              page_background_.R, page_background_.G, page_background_.B);
+    dbg(buf);
+  }
+}
 void WebViewHost::SetDarkMode(bool dark) {
   if (dark_mode_ == dark && background_brush_ != nullptr) return;
   dark_mode_ = dark;
@@ -567,8 +595,19 @@ void WebViewHost::EnsureEnvironment(
     if (SUCCEEDED(Microsoft::WRL::MakeAndInitialize<
                   CoreWebView2EnvironmentOptions>(&concrete))) {
       concrete->put_AreBrowserExtensionsEnabled(TRUE);
+      // DevTools protocol port.
+      //
+      // Reading windows have no browser chrome, so plugin popups/options can
+      // never be shown -- WebView2 refuses to navigate to chrome-extension://
+      // at all (it falls back to a blank error page). The only way to let
+      // users configure a loaded extension is to talk to its background
+      // service worker over CDP and read/write its chrome.storage from there.
+      //
+      // WebView2 accepts the standard Chromium flag here (see Playwright's
+      // WebView2 guide); the port is loopback-only.
+      concrete->put_AdditionalBrowserArguments(L"--remote-debugging-port=9333");
       options = concrete;
-      dbg("EnsureEnvironment: extensions enabled in options");
+      dbg("EnsureEnvironment: extensions + cdp enabled in options");
     } else {
       dbg("EnsureEnvironment: cannot create options object");
     }
@@ -764,6 +803,24 @@ void WebViewHost::CreateSession(const std::string& book_id,
               sprintf_s(buf, "CreateSession: put_Bounds hr=0x%08lx", bhr);
               dbg(buf);
             }
+              // Default background colour of the webview surface.
+              //
+              // WebView2's control is white by default, so every navigation
+              // flashes white before the page (and the dark-injection
+              // placeholder) paints. Dart keeps this in sync with the active
+              // preset: dark preset -> preset background, no preset -> white.
+              {
+                Microsoft::WRL::ComPtr<ICoreWebView2Controller2> c2;
+                if (SUCCEEDED(controller->QueryInterface(IID_PPV_ARGS(&c2)))) {
+                  COREWEBVIEW2_COLOR bg = page_background_;
+                  HRESULT bghr = c2->put_DefaultBackgroundColor(bg);
+                  char buf2[160];
+                  sprintf_s(buf2,
+                            "CreateSession: default bg a=%u rgb=%u,%u,%u hr=0x%08lx",
+                            bg.A, bg.R, bg.G, bg.B, bghr);
+                  dbg(buf2);
+                }
+              }
 
             auto webview = session_raw->webview;
 

@@ -19,6 +19,11 @@ class Books extends Table {
   TextColumn get groupId => text().nullable()();
   IntColumn get sortIndex => integer().withDefault(const Constant(0))();
 
+  /// 这本书打开时使用的深色注入预设 id。
+  ///
+  /// null 表示「默认」—— 不注入任何样式，网页原样显示。
+  TextColumn get presetId => text().nullable()();
+
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
   DateTimeColumn get deletedAt => dateTime().nullable()();
@@ -92,7 +97,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.memory() : super(NativeDatabase.memory());
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -104,9 +109,15 @@ class AppDatabase extends _$AppDatabase {
     // 老库升级时这张表是空的。第一次同步会把它填上(记录当时的清单),
     // 从那之后的删除才能被正确判定。升级前的历史删除无法追溯 ——
     // 那些书本来就没有墓碑,也不会被误判。
+    //
+    // v2 → v3:书可以绑定深色注入预设。
+    // 老书全部为 null,即「默认」不注入,行为和升级前一致。
     onUpgrade: (m, from, to) async {
       if (from < 2) {
         await m.createTable(syncSnapshots);
+      }
+      if (from < 3) {
+        await m.addColumn(books, books.presetId);
       }
     },
   );

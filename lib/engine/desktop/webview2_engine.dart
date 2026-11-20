@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 
 import '../../core/domain/anchor_script.dart';
+import '../../core/domain/dark_preset.dart';
 import '../../core/domain/models.dart';
 import '../../core/ports/ports.dart';
 
@@ -213,6 +214,23 @@ class WebView2Engine implements WebEngine {
   /// 当前记录的主题，避免重复下发。
   bool? _darkMode;
 
+  /// 深色注入引擎脚本（assets/dark/engine.js），首次用时加载一次。
+  ///
+  /// 66 KB，每次页面注入都要拼进桥接脚本里。缓存住，不重复读资源。
+  String? _darkEngineJs;
+
+  /// 当前这本书要用的深色预设；null 表示不注入。
+  DarkPreset? _activePreset;
+
+  /// 设定下一次 openBook 使用的深色预设。
+  ///
+  /// 不在这里直接注入，而是等 openBook 时拼进桥接脚本：
+  /// 桥接脚本通过 AddScriptToExecuteOnDocumentCreated 注入，
+  /// 对每个新文档都会执行，所以书内跳转也能保持一致。
+  void setActivePreset(DarkPreset? preset) {
+    _activePreset = preset;
+  }
+
   /// 初始化通道和插件。
   ///
   /// 必须在第一次 launch 之前完成 —— user data 目录一旦确定
@@ -287,8 +305,56 @@ class WebView2Engine implements WebEngine {
   ///   1. __prReport 的 shim（把上报转到 chrome.webview.postMessage）
   ///   2. anchorBootstrapScript（提供 __pr.collect / __pr.restore）
   ///   3. positionReportScript（滚动/导航事件里调用 __prReport）
+  /// 把页面底色下发给原生侧。
+  ///
+  /// 不注入时下发不透明白色 —— 否则页面若有透明区域会透出深色，
+  /// 看起来像"明明没启用却在乱改"。
+  Future<void> _pushPageBackground() async {
+    final p = _activePreset;
+    int argb = 0xFFFFFFFF;
+    if (p != null) {
+      final hex = p.background.replaceAll('#', '');
+      if (hex.length == 6) {
+        final v = int.tryParse(hex, radix: 16);
+        if (v != null) argb = 0xFF000000 | v;
+      }
+    }
+    try {
+      await _channel.invokeMethod<void>('setPageBackground', {'argb': argb});
+      _diag('page background: `0x${argb.toRadixString(16)}`');
+    } catch (e) {
+      _diag('page background failed: $e');
+    }
+  }
+
+  /// 加载深色引擎脚本（只读一次，66 KB）。
+  Future<void> _loadDarkEngine() async {
+    if (_darkEngineJs != null) return;
+    try {
+      _darkEngineJs = await rootBundle.loadString('assets/dark/engine.js');
+      _diag('dark engine loaded ${_darkEngineJs!.length} chars');
+    } catch (e) {
+      _diag('dark engine load failed: $e');
+    }
+  }
+
   String _buildPageBridge() {
+    final preset = _activePreset;
+    final presetJs = preset == null
+        ? 'null'
+        : jsonEncode(preset.toEngineJson());
+    final engine = _darkEngineJs ?? '';
+    final darkBlock = engine.isEmpty
+        ? ''
+        : '''
+try {
+  $engine
+} catch (e) {
+  window.__prDarkError = String(e);
+}
+''';
     return '''
+window.__PR_DARK_PRESET = $presetJs;
 (function () {
   if (window.__prReportInstalled) return;
   window.__prReportInstalled = true;
@@ -311,6 +377,7 @@ $positionReportScript
 } catch (e) {
   window.__prReportError = String(e);
 }
+$darkBlock
 ''';
   }
 
@@ -409,6 +476,36 @@ $positionReportScript
   /// 已关闭的书:书架据此刷新状态。
   Stream<String> get closedBooks => _closedController.stream;
   final _closedController = StreamController<String>.broadcast();
+
+  /// 打开某个插件的配置页（popup 或 options）。
+  ///
+  /// ── 为什么需要 ──
+  ///
+  /// 阅读窗口没有浏览器工具栏，所以那些"必须在插件面板里才能开启/配置"
+  /// 的插件（Dark Reader、各类开关类）在窗口里既看不到按钮也点不到。
+  /// 插件其实加载成功了，功能也注入了，但用户没法把它打开。
+  ///
+  /// 扩展的 popup / options 页面本质就是普通 HTML，可以直接导航过去。
+  /// 注意有些 popup 依赖 chrome.tabs 读取当前标签页，在这种独立窗口里
+  /// 可能提示"无法访问"，但颜色、亮度这类设置通常仍可修改并保存。
+  ///
+  /// [page] 取自插件 manifest 的 action.default_popup 或 options_ui.page。
+  Future<bool> openExtensionPage(String extId, String page) async {
+    if (extId.isEmpty || page.isEmpty) return false;
+    await _ensureInit();
+    final url = 'chrome-extension://$extId/$page';
+    _diag('openExtensionPage: $url');
+    try {
+      final ok = await _channel.invokeMethod<bool>('openBook', {
+        'bookId': '_ext_$extId',
+        'url': url,
+      });
+      return ok == true;
+    } catch (e) {
+      _diag('openExtensionPage failed: $e');
+      return false;
+    }
+  }
 
   /// 已完成断点恢复的书。
   ///
@@ -560,6 +657,26 @@ $positionReportScript
   Future<String> launch(Book book, {ProgressSnapshot? resume}) async {
     _diag('launch: enter book=${book.id}');
     await _ensureInit();
+    // 开发期验证入口：PAGEREADER_DARK_PRESET=1 时给所有书套内置预设。
+    // 正式的预设绑定（书架右键）已经接上，这里只用于自动化验收。
+    if (_activePreset == null &&
+        Platform.environment['PAGEREADER_DARK_PRESET'] == '1') {
+      _activePreset = DarkPreset.night;
+    }
+    await _loadDarkEngine();
+    // 必须在预设确定之后下发底色，否则会按「不注入」发白色。
+    await _pushPageBackground();
+    // 预设可能刚被改过，重新下发桥接脚本。
+    // 原生侧在 CreateSession 时才用它，所以这里更新即可。
+    try {
+      await _channel.invokeMethod<void>('setPageBridge', {
+        'script': _buildPageBridge(),
+      });
+      _diag('launch: bridge themed preset=${_activePreset?.id ?? "none"}');
+    } catch (e) {
+      _diag('launch: setPageBridge failed $e');
+    }
+
 
     // ── 等正在关闭的同名窗口彻底结束 ──
     //
