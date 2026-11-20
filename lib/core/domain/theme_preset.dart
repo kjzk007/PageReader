@@ -15,8 +15,11 @@ class ThemePreset {
     required this.name,
     this.background = '#14161a',
     this.text = '#d8dade',
+    this.link = '#5ac8fa',
+    this.selection = '#2f6f8f',
     this.brightness = 100,
     this.contrast = 100,
+    this.imageBrightness = 100,
     this.forceFont,
     this.builtin = false,
   });
@@ -31,11 +34,22 @@ class ThemePreset {
   /// 正文颜色（#RRGGBB）。
   final String text;
 
+  /// 正文里链接的颜色（#RRGGBB）。
+  final String link;
+
+  /// 选中文本的背景色（#RRGGBB）。
+  final String selection;
+
   /// 0–160，100 表示不调整。
   final double brightness;
 
   /// 0–160。
   final double contrast;
+
+  /// 图片和视频的亮度，0–150。100 表示不变。
+  ///
+  /// 深色背景上原图往往刺眼，需要单独压暗；纯文字亮度调不回来。
+  final double imageBrightness;
 
   /// 强制字体名；null 表示不动站点字体。
   final String? forceFont;
@@ -52,6 +66,8 @@ class ThemePreset {
     name: '深色阅读',
     background: '#14161a',
     text: '#d8dade',
+    link: '#5ac8fa',
+    selection: '#2f6f8f',
     builtin: true,
   );
 
@@ -73,8 +89,11 @@ class ThemePreset {
     'name': name,
     'background': background,
     'text': text,
+    'link': link,
+    'selection': selection,
     'brightness': brightness,
     'contrast': contrast,
+    'imageBrightness': imageBrightness,
     'forceFont': forceFont,
     'builtin': builtin,
   };
@@ -87,8 +106,11 @@ class ThemePreset {
     'mode': isDarkScheme ? 1 : 0,
     'background': _hexToRgb(background),
     'text': _hexToRgb(text),
+    'link': _hexToRgb(link),
+    'selection': _hexToRgb(selection),
     'brightness': brightness,
     'contrast': contrast,
+    'imageBrightness': imageBrightness,
     'forceFont': forceFont,
   };
 
@@ -108,13 +130,22 @@ class ThemePreset {
   int get textArgb =>
       0xFF000000 | (int.tryParse(text.replaceAll('#', ''), radix: 16) ?? 0xd8dade);
 
+  int get linkArgb =>
+      0xFF000000 | (int.tryParse(link.replaceAll('#', ''), radix: 16) ?? 0x5ac8fa);
+
+  int get selectionArgb =>
+      0xFF000000 | (int.tryParse(selection.replaceAll('#', ''), radix: 16) ?? 0x2f6f8f);
+
   factory ThemePreset.fromJson(Map<String, dynamic> j) => ThemePreset(
     id: j['id'] as String? ?? 'preset-${DateTime.now().millisecondsSinceEpoch}',
     name: j['name'] as String? ?? '未命名',
     background: j['background'] as String? ?? '#14161a',
     text: j['text'] as String? ?? '#d8dade',
+    link: j['link'] as String? ?? '#5ac8fa',
+    selection: j['selection'] as String? ?? '#2f6f8f',
     brightness: (j['brightness'] as num?)?.toDouble() ?? 100,
     contrast: (j['contrast'] as num?)?.toDouble() ?? 100,
+    imageBrightness: (j['imageBrightness'] as num?)?.toDouble() ?? 100,
     forceFont: j['forceFont'] as String?,
     builtin: j['builtin'] as bool? ?? false,
   );
@@ -123,8 +154,11 @@ class ThemePreset {
     String? name,
     String? background,
     String? text,
+    String? link,
+    String? selection,
     double? brightness,
     double? contrast,
+    double? imageBrightness,
     String? forceFont,
     bool clearFont = false,
   }) => ThemePreset(
@@ -132,8 +166,11 @@ class ThemePreset {
     name: name ?? this.name,
     background: background ?? this.background,
     text: text ?? this.text,
+    link: link ?? this.link,
+    selection: selection ?? this.selection,
     brightness: brightness ?? this.brightness,
     contrast: contrast ?? this.contrast,
+    imageBrightness: imageBrightness ?? this.imageBrightness,
     forceFont: clearFont ? null : (forceFont ?? this.forceFont),
     builtin: builtin,
   );

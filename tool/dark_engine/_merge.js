@@ -1,10 +1,11 @@
 const fs = require('fs');
 
 // 函数/类/对象
-const funcs = JSON.parse(fs.readFileSync('_extract.json', 'utf8'));
+const funcs = JSON.parse(fs.readFileSync(process.env.PR_DARK_IN || '_extract.json', 'utf8'));
 // 顶层变量（缓存、颜色表、正则等）
-const vars = fs.existsSync('_extract_vars.json')
-  ? JSON.parse(fs.readFileSync('_extract_vars.json', 'utf8'))
+const varsPath = process.env.PR_DARK_VARS || '_extract_vars.json';
+const vars = fs.existsSync(varsPath)
+  ? JSON.parse(fs.readFileSync(varsPath, 'utf8'))
   : [];
 
 const all = [...funcs, ...vars].filter(d => d.text);
@@ -12,7 +13,7 @@ const all = [...funcs, ...vars].filter(d => d.text);
 all.sort((a, b) => a.start - b.start);
 
 const body = all.map(d => d.text).join('\n\n');
-fs.writeFileSync('_engine_body.js', body, 'utf8');
+fs.writeFileSync(process.env.PR_DARK_BODY || '_engine_body.js', body, 'utf8');
 
 // 语法检查
 try {

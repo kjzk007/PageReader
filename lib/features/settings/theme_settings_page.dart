@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/domain/theme_preset.dart';
 import '../../core/services/settings.dart';
-import 'theme_color_picker.dart';
+import 'theme_color_field.dart';
 
 /// 代表「默认」的哨兵值 —— 不做任何注入，网页原样。
 const kDefaultPresetId = '__default__';
@@ -160,7 +160,10 @@ class _Row extends StatelessWidget {
   }
 }
 
-/// 单个预设的参数页。取色器选任意颜色，不是固定色板。
+/// 单个预设的参数页。
+///
+/// 布局顺序：预览在最上（改任何参数都立刻能看到），
+/// 然后颜色四项、亮度三项。
 class ThemePresetEditPage extends ConsumerStatefulWidget {
   const ThemePresetEditPage({super.key, required this.presetId});
 
@@ -175,8 +178,11 @@ class _ThemePresetEditPageState extends ConsumerState<ThemePresetEditPage> {
   late TextEditingController _name;
   String _background = '#14161a';
   String _text = '#d8dade';
+  String _link = '#5ac8fa';
+  String _selection = '#2f6f8f';
   double _brightness = 100;
   double _contrast = 100;
+  double _imageBrightness = 100;
   bool _loaded = false;
 
   @override
@@ -197,8 +203,11 @@ class _ThemePresetEditPageState extends ConsumerState<ThemePresetEditPage> {
     _name.text = p.name;
     _background = p.background;
     _text = p.text;
+    _link = p.link;
+    _selection = p.selection;
     _brightness = p.brightness;
     _contrast = p.contrast;
+    _imageBrightness = p.imageBrightness;
   }
 
   @override
@@ -252,8 +261,11 @@ class _ThemePresetEditPageState extends ConsumerState<ThemePresetEditPage> {
                           : _name.text.trim(),
                       background: _background,
                       text: _text,
+                      link: _link,
+                      selection: _selection,
                       brightness: _brightness,
                       contrast: _contrast,
+                      imageBrightness: _imageBrightness,
                     ),
                   );
               if (context.mounted) Navigator.of(context).pop();
@@ -272,7 +284,17 @@ class _ThemePresetEditPageState extends ConsumerState<ThemePresetEditPage> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
         children: [
-          const _Label('名称'),
+          ThemePreviewCard(
+            background: _background,
+            text: _text,
+            link: _link,
+            selection: _selection,
+            brightness: _brightness,
+            contrast: _contrast,
+            imageBrightness: _imageBrightness,
+          ),
+          const SizedBox(height: 20),
+          const _SectionLabel('名称'),
           TextField(
             controller: _name,
             style: const TextStyle(
@@ -283,64 +305,45 @@ class _ThemePresetEditPageState extends ConsumerState<ThemePresetEditPage> {
             decoration: const InputDecoration(isDense: true),
           ),
           const SizedBox(height: 20),
-          const _Label('预览'),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Color(_argb(_background)),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: const Color(0xFF3A3F47)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '阅读正文示例',
-                  style: TextStyle(
-                    color: Color(_argb(_text)),
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: 'Microsoft YaHei',
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '这一段用来判断配色是否适合长时间阅读。'
-                  '亮度调高会让页面整体发灰，对比度调高会让文字更硬。',
-                  style: TextStyle(
-                    color: Color(_argb(_text)).withValues(alpha: 0.9),
-                    fontSize: 13,
-                    height: 1.6,
-                    fontFamily: 'Microsoft YaHei',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-          ThemeColorPicker(
-            title: '页面底色',
-            initial: _background,
+          const _SectionLabel('颜色'),
+          ThemeColorField(
+            label: '背景色',
+            value: _background,
             onChanged: (v) => setState(() => _background = v),
           ),
-          const SizedBox(height: 20),
-          ThemeColorPicker(
-            title: '正文颜色',
-            initial: _text,
+          ThemeColorField(
+            label: '文字色',
+            value: _text,
             onChanged: (v) => setState(() => _text = v),
           ),
-          const SizedBox(height: 20),
+          ThemeColorField(
+            label: '链接色',
+            value: _link,
+            onChanged: (v) => setState(() => _link = v),
+          ),
+          ThemeColorField(
+            label: '选中色',
+            value: _selection,
+            onChanged: (v) => setState(() => _selection = v),
+          ),
+          const SizedBox(height: 16),
+          const _SectionLabel('亮度'),
           _Slider(
-            label: '亮度',
+            label: '文字亮度',
             value: _brightness,
             onChanged: (v) => setState(() => _brightness = v),
           ),
           _Slider(
-            label: '对比度',
+            label: '文字对比度',
             value: _contrast,
             onChanged: (v) => setState(() => _contrast = v),
           ),
-          const SizedBox(height: 10),
+          _Slider(
+            label: '图片亮度',
+            value: _imageBrightness,
+            onChanged: (v) => setState(() => _imageBrightness = v),
+          ),
+          const SizedBox(height: 8),
           Text(
             _isDark(_background)
                 ? '底色偏暗：引擎会把浅色页面往深算。'
@@ -356,12 +359,6 @@ class _ThemePresetEditPageState extends ConsumerState<ThemePresetEditPage> {
     );
   }
 
-  static int _argb(String hex) {
-    final h = hex.replaceAll('#', '');
-    if (h.length != 6) return 0xFF14161A;
-    return 0xFF000000 | (int.tryParse(h, radix: 16) ?? 0x14161A);
-  }
-
   static bool _isDark(String hex) {
     final h = hex.replaceAll('#', '');
     if (h.length != 6) return true;
@@ -372,15 +369,195 @@ class _ThemePresetEditPageState extends ConsumerState<ThemePresetEditPage> {
   }
 }
 
-class _Label extends StatelessWidget {
-  const _Label(this.text);
+/// 预览卡片：把「标题 / 正文 / 链接 / 选中 / 代码块 / 图片」都摆出来。
+///
+/// 每一项都对应一个可调维度 —— 改哪个参数都能在这里看出差别，
+/// 否则用户调完不知道有没有生效。
+class ThemePreviewCard extends StatelessWidget {
+  const ThemePreviewCard({
+    super.key,
+    required this.background,
+    required this.text,
+    required this.link,
+    required this.selection,
+    required this.brightness,
+    required this.contrast,
+    required this.imageBrightness,
+  });
+
+  final String background;
+  final String text;
+  final String link;
+  final String selection;
+  final double brightness;
+  final double contrast;
+  final double imageBrightness;
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = ThemeColorField.colorOf(background);
+    // 亮度/对比度用 Color 的反向微调近似：不追求物理精确，
+    // 只要能体现出「拖了滑块预览跟着变」就够。
+    final fg = ThemeColorField.colorOf(text);
+    final fgAdjusted = Color.lerp(
+      fg,
+      brightness >= 100 ? Colors.white : Colors.black,
+      ((brightness - 100).abs() / 100) * 0.35,
+    )!;
+    final contrastFactor = (contrast - 100) / 100;
+    final fgFinal = Color.lerp(
+      fgAdjusted,
+      contrastFactor >= 0 ? Colors.white : Colors.grey,
+      contrastFactor.abs() * 0.25,
+    )!;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFF3A3F47)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '第一章　阅读的姿势',
+            style: TextStyle(
+              color: fgFinal,
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              fontFamily: 'Microsoft YaHei',
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '长时间阅读时，页面底色和文字色的对比决定眼睛的舒适度。'
+            '这一行用来判断正文是否清晰。',
+            style: TextStyle(
+              color: fgFinal,
+              fontSize: 13,
+              height: 1.7,
+              fontFamily: 'Microsoft YaHei',
+            ),
+          ),
+          const SizedBox(height: 8),
+          // 链接：单独上色，方便判断是否和正文拉开
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '参考：',
+                  style: TextStyle(
+                    color: fgFinal,
+                    fontSize: 13,
+                    height: 1.7,
+                    fontFamily: 'Microsoft YaHei',
+                  ),
+                ),
+                TextSpan(
+                  text: '相关章节的说明',
+                  style: TextStyle(
+                    color: ThemeColorField.colorOf(link),
+                    fontSize: 13,
+                    height: 1.7,
+                    decoration: TextDecoration.underline,
+                    fontFamily: 'Microsoft YaHei',
+                  ),
+                ),
+                TextSpan(
+                  text: '，点开可以跳转。',
+                  style: TextStyle(
+                    color: fgFinal,
+                    fontSize: 13,
+                    height: 1.7,
+                    fontFamily: 'Microsoft YaHei',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          // 选中效果：用一段套了背景色的文字模拟
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+            color: ThemeColorField.colorOf(selection),
+            child: Text(
+              '这一段模拟被鼠标选中的样子',
+              style: TextStyle(
+                color: fgFinal,
+                fontSize: 13,
+                fontFamily: 'Microsoft YaHei',
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          // 代码块：固定用稍亮/稍暗一档的底色，跟正文区分开
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Color.lerp(bg, fgFinal, 0.10),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              'for (final p in presets) {\n  print(p.name);\n}',
+              style: TextStyle(
+                color: fgFinal,
+                fontSize: 12,
+                height: 1.5,
+                fontFamily: 'Consolas',
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          // 图片：用一个渐变块模拟照片，亮度滑块直接作用在它上面
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: Opacity(
+              opacity: (imageBrightness / 100).clamp(0.0, 1.0),
+              child: Container(
+                height: 90,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      const Color(0xFF4A6FA5),
+                      const Color(0xFF9C5BD1),
+                      const Color(0xFFD98A5B),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: Center(
+                  child: Text(
+                    '图片亮度 ${imageBrightness.round()}%',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontFamily: 'Microsoft YaHei',
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
 
   final String text;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 8, top: 4),
       child: Text(
         text,
         style: const TextStyle(
@@ -407,11 +584,11 @@ class _Slider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
+      padding: const EdgeInsets.only(bottom: 2),
       child: Row(
         children: [
           SizedBox(
-            width: 60,
+            width: 84,
             child: Text(
               label,
               style: const TextStyle(
@@ -423,10 +600,10 @@ class _Slider extends StatelessWidget {
           ),
           Expanded(
             child: Slider(
-              value: value.clamp(30, 160),
-              min: 30,
+              value: value.clamp(20, 160),
+              min: 20,
               max: 160,
-              divisions: 130,
+              divisions: 140,
               activeColor: const Color(0xFF5AC8FA),
               onChanged: onChanged,
             ),

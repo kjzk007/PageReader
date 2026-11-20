@@ -2358,11 +2358,53 @@
   }
 
   // ===== 占位：第一帧就是深色 =====
+  /// 把用户指定的链接色、选中色、图片亮度写成一张全局样式表。
+  ///
+  /// 这三项和逐元素算色是两条独立通路：
+  ///   - 链接色是「用户明确指定」，优先于算色结果；
+  ///   - 选中色只能靠 ::selection 伪元素，算色碰不到；
+  ///   - 图片亮度必须用 filter，逐元素改背景没有意义。
+  function applyUserOverrides() {
+    var rules = [];
+
+    // 链接：只覆盖正文里的链接，放过按钮、导航和卡片，
+    // 否则站点精心设计的按钮会一片死蓝。
+    var link = PRESET.link;
+    if (link) {
+      rules.push(
+        'a[href]:not([class*="btn"]):not([class*="button"])' +
+          ':not([role="button"])' +
+          '{color:' + link + ' !important}'
+      );
+    }
+
+    // 选中文本
+    var sel = PRESET.selection;
+    if (sel) {
+      rules.push('::selection{background-color:' + sel + ' !important}');
+      rules.push('::-moz-selection{background-color:' + sel + ' !important}');
+    }
+
+    // 图片亮度：深底上原图刺眼，这里统一压暗。
+    var ib = PRESET.imageBrightness;
+    if (typeof ib === 'number' && ib !== 100) {
+      var pct = Math.max(0, ib) + '%';
+      rules.push('img,video,picture img{filter:brightness(' + pct + ') !important}');
+    }
+
+    if (!rules.length) return;
+    var style = document.createElement('style');
+    style.id = '__pr_user_overrides';
+    style.textContent = rules.join('\n');
+    var host = document.head || document.documentElement;
+    if (host) host.appendChild(style);
+  }
+
   function applyPlaceholder() {
     var bg = THEME.darkSchemeBackgroundColor;
     var css =
       'html,body{background-color:' + bg + ' !important;' +
-      'color-scheme:dark !important}';
+      'color-scheme:' + (THEME.mode === 1 ? 'dark' : 'light') + ' !important}';
     var style = document.createElement('style');
     style.id = '__pr_dark_placeholder';
     style.textContent = css;
@@ -2371,6 +2413,23 @@
   }
 
   // ===== 元素算色 =====
+  /// 是不是需要套用用户链接色的元素。
+  ///
+  /// 只排除真正的按钮（class 含 btn/button、role=button），其余链接一律上色。
+  /// 不要用「有没有背景色」来判断 —— 实测导航栏链接普遍带底色，
+  /// 拿这个当排除条件会把整页链接都放过，用户改了半天没反应。
+  function isUserLink(el) {
+    if (!PRESET.link) return false;
+    if (el.tagName !== 'A') return false;
+    if (!el.hasAttribute('href')) return false;
+    var cls = (el.className && typeof el.className === 'string')
+      ? el.className.toLowerCase()
+      : '';
+    if (cls.indexOf('btn') >= 0 || cls.indexOf('button') >= 0) return false;
+    if (el.getAttribute('role') === 'button') return false;
+    return true;
+  }
+
   function toCss(color) {
     if (!color) return null;
     if (typeof color === 'string') return color;
@@ -2404,11 +2463,20 @@
     }
 
     try {
-      var fgColor = parseColorWithCache(cs.color);
-      if (fgColor && fgColor.a > 0.02) {
-        var newFg = modifyForegroundColor(fgColor, THEME);
-        var fgCss = toCss(newFg);
-        if (fgCss) el.style.setProperty('color', fgCss, 'important');
+      // 链接色优先于算色结果。
+      //
+      // 不能只靠注入一张样式表：算色会给每个元素写内联 style，
+      // 而内联的 !important 优先级高于样式表的 !important ——
+      // 结果就是链接色被默默盖掉，用户在设置里改半天没反应。
+      if (isUserLink(el)) {
+        el.style.setProperty('color', PRESET.link, 'important');
+      } else {
+        var fgColor = parseColorWithCache(cs.color);
+        if (fgColor && fgColor.a > 0.02) {
+          var newFg = modifyForegroundColor(fgColor, THEME);
+          var fgCss = toCss(newFg);
+          if (fgCss) el.style.setProperty('color', fgCss, 'important');
+        }
       }
     } catch (e) {
       note(errors, 'fg:' + (e && e.message));
@@ -2543,6 +2611,7 @@
   // ===== 启动 =====
   function start() {
     applyPlaceholder();
+    applyUserOverrides();
     if (THEME.useFont && THEME.fontFamily) {
       document.documentElement.style.setProperty(
         'font-family',
