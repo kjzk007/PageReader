@@ -145,7 +145,7 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
 
-      final menu = tester.getRect(find.byType(PopupMenuItem<String>).first);
+      final menu = tester.getRect(find.text('打开'));
       // 菜单左上角应该在手势位置附近(不要求精确,只要不在屏幕另一端)
       expect(
         (menu.left - center.dx).abs(),

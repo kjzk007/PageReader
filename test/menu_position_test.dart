@@ -97,7 +97,7 @@ Book makeBook(String id, String title) => Book(
 Future<Offset> rightClickAt(WidgetTester tester, Offset at) async {
   await tester.tapAt(at, buttons: kSecondaryButton);
   await tester.pumpAndSettle();
-  final menu = find.byType(PopupMenuItem<String>).first;
+      final menu = find.text('打开').first;
   return tester.getTopLeft(menu);
 }
 

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/services/settings.dart';
-import 'theme_preset_section.dart';
+import 'theme_settings_page.dart';
 import 'extension_section.dart';
 
 /// 设置页。
@@ -56,11 +56,10 @@ class SettingsPage extends ConsumerWidget {
           ),
           const SizedBox(height: 28),
           _sectionTitle('主题设置'),
-      const ThemePresetSection(),
-      const SizedBox(height: 8),
-      _sectionTitle('浏览器插件'),
-          const ExtensionSection(),
+          _ThemeEntry(),
           const SizedBox(height: 28),
+          _sectionTitle('浏览器插件'),
+          const ExtensionSection(),
           _sectionTitle('关于'),
           const _About(),
         ],
@@ -239,6 +238,68 @@ class _Hint extends StatelessWidget {
           fontSize: 11,
           fontFamily: 'Microsoft YaHei',
           height: 1.6,
+        ),
+      ),
+    );
+  }
+}
+
+/// 设置主页上的「主题设置」入口。
+///
+/// 只显示当前有几套不是默认的主题，点进去才是列表。
+class _ThemeEntry extends ConsumerWidget {
+  const _ThemeEntry();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final presets = ref.watch(themePresetsProvider);
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1E22),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFF2C3038)),
+      ),
+      child: InkWell(
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const ThemeSettingsPage()),
+        ),
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Row(
+            children: [
+              const Icon(Icons.palette_outlined,
+                  size: 18, color: Color(0xFF8A9099)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '主题设置',
+                      style: TextStyle(
+                        color: Color(0xFFE3E5E8),
+                        fontSize: 13,
+                        fontFamily: 'Microsoft YaHei',
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      presets.isEmpty
+                          ? '还没有自定义主题'
+                          : '${presets.length} 套主题',
+                      style: const TextStyle(
+                        color: Color(0xFF8A9099),
+                        fontSize: 11.5,
+                        fontFamily: 'Microsoft YaHei',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, size: 18, color: Color(0xFF6B7280)),
+            ],
+          ),
         ),
       ),
     );
