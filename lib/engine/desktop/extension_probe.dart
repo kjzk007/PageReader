@@ -98,22 +98,34 @@ class ExtensionProbe {
       }
     }
 
-    // 2. 我们自己的备份目录（浏览器把插件删了还能救回来）
-    final appData = Platform.environment['APPDATA'];
-    if (appData != null && appData.isNotEmpty) {
-      final backupRoot = Directory(
-        p.join(appData, 'com.pagereader', 'PageReader', 'extensions-backup'),
-      );
-      if (backupRoot.existsSync()) {
-        for (final ext in _extensionsIn(backupRoot.path)) {
-          if (!seen.add(ext.id)) continue;
-          out.add(ext);
-        }
-      }
-    }
 
     out.sort((a, b) => a.name.compareTo(b.name));
     return out;
+  }
+
+  /// 按数字分段比较版本目录名（`1.10.0_0` vs `1.9.0_0`）。
+  ///
+  /// 不能用字符串比较：`"1.10.0_0" < "1.9.0_0"`，因为逐字符比到第二位
+  /// 时 `'1' < '9'`。插件从 1.9 升到 1.10 后如果旧目录还在，就会一直
+  /// 加载旧版。
+  ///
+  /// 规则：按 `.` `_` 切成段，双方都能转成 int 时按数值比；
+  /// 转不动的段退回字符串比。
+  static int _compareVersion(String a, String b) {
+    final pa = a.split(RegExp(r'[._]'));
+    final pb = b.split(RegExp(r'[._]'));
+    final n = pa.length < pb.length ? pa.length : pb.length;
+    for (var i = 0; i < n; i++) {
+      final na = int.tryParse(pa[i]);
+      final nb = int.tryParse(pb[i]);
+      if (na != null && nb != null) {
+        if (na != nb) return na.compareTo(nb);
+      } else {
+        final c = pa[i].compareTo(pb[i]);
+        if (c != 0) return c;
+      }
+    }
+    return pa.length.compareTo(pb.length);
   }
 
   static List<String> _profileDirs(Directory root) {
@@ -146,10 +158,14 @@ class ExtensionProbe {
             if (!File(p.join(vDir.path, 'manifest.json')).existsSync()) {
               continue;
             }
-            if (best == null ||
-                p.basename(vDir.path).compareTo(p.basename(best.path)) > 0) {
-              best = vDir;
-            }
+              if (best == null ||
+                  _compareVersion(
+                        p.basename(vDir.path),
+                        p.basename(best.path),
+                      ) >
+                      0) {
+                best = vDir;
+              }
           }
         } catch (_) {}
         if (best == null) continue;

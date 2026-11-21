@@ -218,7 +218,6 @@ pagereader.sqlite    书架与阅读进度
 settings.json        设置、插件勾选、同步凭据
 webview2\            网页内核数据（插件数据、Cookie）
 webview2.log         内核诊断日志（排查问题用）
-extensions-backup\   插件备份（浏览器把插件删了还能救回来）
 ```
 
 **彻底重置**：删掉整个 `PageReader` 目录即可。

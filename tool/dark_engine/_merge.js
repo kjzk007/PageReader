@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 
 // 函数/类/对象
 const funcs = JSON.parse(fs.readFileSync(process.env.PR_DARK_IN || '_extract.json', 'utf8'));
@@ -12,7 +13,22 @@ const all = [...funcs, ...vars].filter(d => d.text);
 // 按原始行号排序：变量可能依赖前面的变量（如 rgbUnits 用到 rgbRange）
 all.sort((a, b) => a.start - b.start);
 
-const body = all.map(d => d.text).join('\n\n');
+// 排除不用的函数。
+//
+// _drop.json 由 _find_unused.js 生成并人工核对过：里面每个名字都确认
+// 在整个引擎里只出现一次（即没有调用者），且不被其它保留函数引用。
+// 这些是 filter / static 模式和早期 DOM 工具留下的死代码。
+const dropPath = path.join(__dirname, '_drop.json');
+let drop = [];
+if (fs.existsSync(dropPath)) {
+  try { drop = JSON.parse(fs.readFileSync(dropPath, 'utf8')); } catch (_) {}
+}
+const used = drop.length ? all.filter(d => !drop.includes(d.name)) : all;
+if (drop.length) {
+  console.log('  排除死代码 ' + (all.length - used.length) + ' 项');
+}
+
+const body = used.map(d => d.text).join('\n\n');
 fs.writeFileSync(process.env.PR_DARK_BODY || '_engine_body.js', body, 'utf8');
 
 // 语法检查

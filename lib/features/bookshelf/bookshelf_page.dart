@@ -11,7 +11,6 @@ import '../../core/domain/models.dart';
 import '../../core/ports/ports.dart';
 import '../../core/services/progress_recorder.dart';
 import '../../core/services/settings.dart';
-import '../../engine/desktop/cdp_engine.dart';
 import '../../engine/desktop/webview2_engine.dart';
 import '../settings/extension_onboarding.dart';
 import '../../engine/android/webview_engine.dart';
@@ -19,9 +18,9 @@ import '../reader/reader_page.dart';
 import '../sync/sync_desktop_page.dart';
 import '../sync/sync_phone_page.dart';
 import '../settings/settings_page.dart';
+import '../../engine/desktop/extension_probe.dart';
 import 'book_context_menu.dart';
 import '../settings/theme_settings_page.dart';
-import '../diagnostics/diagnostics_page.dart';
 import '../../core/domain/chapter_extractor.dart';
 import '../../core/services/icon_fetcher.dart';
 import '../../core/services/icon_palette.dart';
@@ -111,13 +110,7 @@ class _BookshelfPageState extends State<BookshelfPage> {
 
     final closeAfter = widget.autoCloseMs;
     final engine = widget.engine;
-    if (closeAfter != null && engine is CdpEngine) {
-      await Future<void>.delayed(Duration(milliseconds: closeAfter));
-      final targetId = engine.debugTargetFor(bookId);
-      if (targetId != null) {
-        await engine.debugCall('Target.closeTarget', {'targetId': targetId});
-      }
-    } else if (closeAfter != null && engine is WebView2Engine) {
+    if (closeAfter != null && engine is WebView2Engine) {
       final wv2 = engine;
       // 内嵌内核的自动化验收：先滚到指定位置再关窗。
       // 这样才能验证"关闭时保存进度"和"重开时恢复"两条链路，
@@ -215,10 +208,10 @@ class _BookshelfPageState extends State<BookshelfPage> {
 
   Future<void> _openBook(Book book) async {
     final engine = widget.engine;
+    // 引擎还在初始化（FutureProvider 尚未返回）时给出准确提示。
+    // 内嵌内核不会"找不到浏览器"——没有外部依赖，只有还没准备好。
     if (engine == null) {
-      // 检测不到浏览器是最坏情况:整个应用无法打开任何书。
-      // 不能只丢一句"找不到",要告诉用户具体怎么做。
-      await _showNoBrowserHelp();
+      _toast('阅读内核正在准备，稍等片刻再点一次');
       return;
     }
     if (_opening.contains(book.id)) return;
@@ -304,11 +297,6 @@ class _BookshelfPageState extends State<BookshelfPage> {
       // 打开成功后立刻启动记录:否则导航事件没人接,进度全丢。
       widget.recorder?.start();
       _reload();
-    } on CdpLaunchError catch (e) {
-      // 需要用户动手的错误（比如"先退出 Edge"）要完整、单独地展示，
-      // 不能被通用 catch 吞成一句"打开失败"。
-      if (!mounted) return;
-      await _showLaunchHelp(e.message);
     } catch (error) {
       if (!mounted) return;
       _toast('打开失败：$error');
@@ -389,106 +377,7 @@ class _BookshelfPageState extends State<BookshelfPage> {
     }
   }
 
-  /// 显示"启动浏览器失败但用户可以自己解决"的提示。
-  ///
-  /// 目前唯一场景:Edge 正在运行,接管不了调试端口。
-  /// 这种错误必须完整展示 —— 用 toast 一闪而过的话,
-  /// 用户只会看到"书没打开",不知道要先退出浏览器。
-  Future<void> _showLaunchHelp(String message) async {
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF191B1F),
-        title: const Text(
-          '无法记录进度',
-          style: TextStyle(
-            color: Color(0xFFF2F3F5),
-            fontSize: 17,
-            fontFamily: 'Microsoft YaHei',
-          ),
-        ),
-        content: Text(
-          message,
-          style: const TextStyle(
-            color: Color(0xFF9AA0A6),
-            fontSize: 13,
-            fontFamily: 'Microsoft YaHei',
-            height: 1.7,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text(
-              '知道了',
-              style: TextStyle(
-                color: Color(0xFF5AC8FA),
-                fontFamily: 'Microsoft YaHei',
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
-  Future<void> _showNoBrowserHelp() async {
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF191B1F),
-        title: const Text(
-          '没有找到浏览器',
-          style: TextStyle(color: Color(0xFFF2F3F5), fontSize: 17),
-        ),
-        content: const SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'PageReader 借用系统里的 Edge 或 Chrome 来显示网页,'
-                '本身不带浏览器内核。',
-                style: TextStyle(color: Color(0xFF9AA0A6), fontSize: 13),
-              ),
-              SizedBox(height: 12),
-              Text(
-                '安装任意一个即可：',
-                style: TextStyle(color: Color(0xFFC9CDD3), fontSize: 13),
-              ),
-              SizedBox(height: 6),
-              Text(
-                '· Microsoft Edge（Windows 自带,一般不会缺）\n'
-                '· Google Chrome',
-                style: TextStyle(color: Color(0xFF7C8188), fontSize: 12),
-              ),
-              SizedBox(height: 12),
-              Text(
-                '装好后重新打开 PageReader 会自动识别。',
-                style: TextStyle(color: Color(0xFF7C8188), fontSize: 12),
-              ),
-              SizedBox(height: 14),
-              Text(
-                '已装但没识别到？可能是安装在非常规位置。'
-                '请把 msedge.exe 或 chrome.exe 的完整路径告诉我。',
-                style: TextStyle(color: Color(0xFF6E747C), fontSize: 11),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text(
-              '知道了',
-              style: TextStyle(color: Color(0xFF5AC8FA)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   void _toast(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -519,23 +408,7 @@ class _BookshelfPageState extends State<BookshelfPage> {
     await _future;
   }
 
-  /// 打开设置页。
-  void _openSettings() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const SettingsPage()),
-    );
-  }
 
-  /// 打开展开诊断页。
-  void _openDiagnostics() {
-    final engine = widget.engine;
-    if (engine is! CdpEngine) return;
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => DiagnosticsPage(engine: engine),
-      ),
-    );
-  }
 
   /// 打开加书对话框,确认后落库。书加完留在书架,不自动打开。
   /// 分组管理:新建 / 改名 / 删除。
@@ -871,9 +744,6 @@ class _BookshelfPageState extends State<BookshelfPage> {
                         progress: data.progress[book.id],
                         isOpen: data.open.contains(book.id),
                         isBusy: _opening.contains(book.id),
-                        isDegraded:
-                            widget.engine is CdpEngine &&
-                            (widget.engine as CdpEngine).isDegraded(book.id),
                         onTap: () => _openBook(book),
                         onSecondaryTap: (position) =>
                             _showBookMenu(book, position),
@@ -1233,14 +1103,9 @@ class _BookshelfPageState extends State<BookshelfPage> {
                 tooltip: '同步',
                 icon: const Icon(Icons.sync, color: Color(0xFF9AA0A6)),
               ),
-              IconButton(
-                onPressed: _openSettings,
-                tooltip: '设置',
-                icon: const Icon(
-                  Icons.settings_outlined,
-                  color: Color(0xFF9AA0A6),
-                ),
-              ),
+              // 有新插件时图标右上角点一个红点 —— 用户不会主动去设置页翻，
+              // 不提示的话永远不知道浏览器里新装的插件可以在这里启用。
+              const _SettingsButton(),
               if (_searching)
                 SizedBox(
                   width: 260,
@@ -1287,16 +1152,6 @@ class _BookshelfPageState extends State<BookshelfPage> {
                 tooltip: '加一本书',
                 icon: const Icon(Icons.add, color: Color(0xFF9AA0A6)),
               ),
-              if (widget.engine is CdpEngine)
-                IconButton(
-                  onPressed: () => _openDiagnostics(),
-                  tooltip: '诊断',
-                  icon: const Icon(
-                    Icons.monitor_heart_outlined,
-                    color: Color(0xFF9AA0A6),
-                    size: 20,
-                  ),
-                ),
             ],
           ),
         ),
@@ -1416,7 +1271,6 @@ class _BookCard extends StatelessWidget {
     required this.isBusy,
     required this.onTap,
     this.onSecondaryTap,
-    this.isDegraded = false,
   });
 
   final Book book;
@@ -1428,9 +1282,6 @@ class _BookCard extends StatelessWidget {
   /// 右键菜单。桌面端有,移动端没有(那边用长按)。
   final void Function(Offset position)? onSecondaryTap;
 
-  /// 这本书是否处于降级模式(CDP 打不开,进度会丢)。
-  /// 必须显示出来,不能静默丢数据。
-  final bool isDegraded;
 
   @override
   Widget build(BuildContext context) {
@@ -1489,29 +1340,6 @@ class _BookCard extends StatelessWidget {
                           )
                         : _cover(initial),
                   ),
-                  // 降级徽章:这本书 CDP 打不开、进度会丢,必须让用户看见。
-                  if (isDegraded)
-                    Positioned(
-                      left: 8,
-                      top: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 5,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFB454).withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Text(
-                          '不记进度',
-                          style: TextStyle(
-                            fontSize: 9,
-                            color: Color(0xFFFFB454),
-                          ),
-                        ),
-                      ),
-                    ),
                   if (isOpen)
                     Positioned(
                       right: 8,
@@ -1531,19 +1359,6 @@ class _BookCard extends StatelessWidget {
                             fontSize: 10,
                             color: Color(0xFF5AC8FA),
                           ),
-                        ),
-                      ),
-                    ),
-                  if (progress != null)
-                    Positioned(
-                      right: 8,
-                      bottom: 8,
-                      child: Container(
-                        width: 6,
-                        height: 6,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF5AC8FA),
-                          shape: BoxShape.circle,
                         ),
                       ),
                     ),
@@ -1677,6 +1492,64 @@ class _MoveOption extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 工具栏上的设置按钮。有新装插件时右上角点一个红点。
+class _SettingsButton extends ConsumerWidget {
+  const _SettingsButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // 测试环境是裸组件树，没有 ProviderScope；那就不显示红点。
+    ExtensionSettings? ext;
+    try {
+      ext = ref.watch(extensionSettingsProvider);
+    } catch (_) {
+      ext = null;
+    }
+    // 探查可能要几百毫秒，不该阻塞工具栏渲染，所以放在后台。
+    // 只在设置页打开时才 markSeen，所以这里的"新增"会一直显示到
+    // 用户真的去看过一次为止。
+    return FutureBuilder<List<BrowserExtension>>(
+      future: Future<List<BrowserExtension>>.microtask(ExtensionProbe.probe),
+      builder: (context, snap) {
+        final current = (snap.data ?? const <BrowserExtension>[])
+            .map((e) => e.id)
+            .toSet();
+        final hasNew = ext?.newIdsAgainst(current).isNotEmpty ?? false;
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            IconButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const SettingsPage()),
+              ),
+              tooltip: hasNew ? '设置（有新插件）' : '设置',
+              icon: const Icon(
+                Icons.settings_outlined,
+                color: Color(0xFF9AA0A6),
+              ),
+            ),
+            if (hasNew)
+              Positioned(
+                right: 8,
+                top: 8,
+                child: IgnorePointer(
+                  child: Container(
+                    width: 7,
+                    height: 7,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFFF6B6B),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }

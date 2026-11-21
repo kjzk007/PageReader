@@ -43,6 +43,13 @@ class _ExtensionSectionState extends ConsumerState<ExtensionSection> {
       _extensions = list;
       _loading = false;
     });
+      // 用户真正看到了这份列表，才算「见过」。
+      //
+      // 不能在启动时标记 —— 那时列表还没渲染过，等于替用户把
+      // 还没看到的新插件标成已读，后续的新增提示永远不会出现。
+      await ref
+          .read(extensionSettingsProvider.notifier)
+          .markSeen(list.map((e) => e.id).toSet());
   }
 
   @override

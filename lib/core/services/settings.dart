@@ -172,6 +172,7 @@ class ExtensionSettings {
   const ExtensionSettings({
     required this.enabledIds,
     this.asked = false,
+    this.seenIds = const {},
   });
 
   /// 已启用的插件 ID。
@@ -188,13 +189,32 @@ class ExtensionSettings {
   /// 问过之后就不再打扰 —— 哪怕他一个都没勾，那也是他的选择。
   final bool asked;
 
+  /// 上次在设置里见过的插件 ID 集合。
+  ///
+  /// 用户可能在浏览器里新装插件，而 `asked` 只问一次 —— 之后收不到
+  /// 任何提示，得自己想起去设置页翻。存下见过的集合就能比对出新增项，
+  /// 在设置入口标个小提示。
+  final Set<String> seenIds;
+
+  /// 相对 [seenIds] 新增的插件 ID。
+  ///
+  /// [current] 是当前探查到的全部插件 ID。空列表表示没有新增。
+  List<String> newIdsAgainst(Set<String> current) {
+    if (seenIds.isEmpty) return const [];
+    return current.where((id) => !seenIds.contains(id)).toList()..sort();
+  }
+
   bool isEnabled(String id) => enabledIds.contains(id);
 
-  ExtensionSettings copyWith({Set<String>? enabledIds, bool? asked}) =>
-      ExtensionSettings(
-        enabledIds: enabledIds ?? this.enabledIds,
-        asked: asked ?? this.asked,
-      );
+  ExtensionSettings copyWith({
+    Set<String>? enabledIds,
+    bool? asked,
+    Set<String>? seenIds,
+  }) => ExtensionSettings(
+    enabledIds: enabledIds ?? this.enabledIds,
+    asked: asked ?? this.asked,
+    seenIds: seenIds ?? this.seenIds,
+  );
 }
 
 class ExtensionSettingsNotifier extends Notifier<ExtensionSettings> {
@@ -206,7 +226,12 @@ class ExtensionSettingsNotifier extends Notifier<ExtensionSettings> {
     }
     final raw = store.readStringList('extensions.enabled');
     final asked = store.readString('extensions.asked') == '1';
-    return ExtensionSettings(enabledIds: raw.toSet(), asked: asked);
+    final seen = store.readStringList('extensions.seen');
+    return ExtensionSettings(
+      enabledIds: raw.toSet(),
+      asked: asked,
+      seenIds: seen.toSet(),
+    );
   }
 
   Future<void> setEnabled(Set<String> ids) async {
@@ -216,10 +241,21 @@ class ExtensionSettingsNotifier extends Notifier<ExtensionSettings> {
         ?.writeStringList('extensions.enabled', ids.toList()..sort());
   }
 
-  /// 标记"已经问过用户"，之后不再弹引导。
+  /// 标记「已经问过用户」，之后不再弹引导。
   Future<void> markAsked() async {
     state = state.copyWith(asked: true);
     await ref.read(settingsStoreProvider)?.writeString('extensions.asked', '1');
+  }
+
+  /// 记下「这次见过哪些插件」，供下次比对新增。
+  ///
+  /// 只在用户真的打开过设置页时调 —— 否则等于把没看到的东西
+  /// 标记成「已见过」，红点永远不会出现。
+  Future<void> markSeen(Set<String> ids) async {
+    state = state.copyWith(seenIds: ids);
+    await ref
+        .read(settingsStoreProvider)
+        ?.writeStringList('extensions.seen', ids.toList()..sort());
   }
 
   Future<void> toggle(String id, bool enabled) async {
@@ -232,7 +268,6 @@ class ExtensionSettingsNotifier extends Notifier<ExtensionSettings> {
     await setEnabled(next);
   }
 }
-
 final extensionSettingsProvider =
     NotifierProvider<ExtensionSettingsNotifier, ExtensionSettings>(
       ExtensionSettingsNotifier.new,

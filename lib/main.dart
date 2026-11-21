@@ -20,10 +20,8 @@ import 'core/domain/cover_color.dart';
 import 'core/domain/models.dart';
 import 'data/dev_seed.dart';
 import 'data/sqlite_library_store.dart';
-import 'engine/desktop/browser_locator.dart';
 import 'engine/desktop/browser_profile.dart';
 import 'engine/desktop/browser_shadow.dart';
-import 'engine/desktop/cdp_engine.dart';
 import 'engine/desktop/extension_probe.dart';
 import 'engine/desktop/webview2_engine.dart';
 import 'engine/android/webview_engine.dart';
@@ -61,7 +59,7 @@ Future<Directory> resolveDataDir() async {
 
 /// 阅读引擎:按平台分派。
 ///
-///   桌面 → CdpEngine,驱动外部 Edge/Chrome
+///   桌面 → WebView2Engine，内嵌 WebView2（不依赖外部浏览器）
 ///   Android → WebViewEngine,内嵌 WebView(渲染在应用进程内)
 ///
 /// 两者实现同一个 WebEngine 接口,书架与记录器无需知道区别。
@@ -102,17 +100,16 @@ final engineProvider = FutureProvider<WebEngine?>((ref) async {
 
   final bootstrapMarker = File(p.join(userDataDir.path, '.bootstrapped'));
   if (!bootstrapMarker.existsSync()) {
-    final browser = BrowserLocator.find();
-    if (browser != null) {
-      final userProfile = BrowserProfile.resolve(browser);
-      if (userProfile != null) {
-        // 只复制 Cookie 和登录态需要的部分，不复制插件目录 ——
-        // 插件由用户在首次启动时勾选，然后显式加载。
-        await BrowserShadow.bootstrapUserData(
-          source: userProfile,
-          target: userDataDir,
-        );
-      }
+    // 不再找浏览器 exe —— 内嵌内核不需要它。
+    // 只要能定位到日常用的那个 profile 目录，把 Cookie 和登录态搬过来即可。
+    final userProfile = BrowserProfile.resolveAny();
+    if (userProfile != null) {
+      // 只复制 Cookie 和登录态需要的部分，不复制插件目录 ——
+      // 插件由用户在首次启动时勾选，然后显式加载。
+      await BrowserShadow.bootstrapUserData(
+        source: userProfile,
+        target: userDataDir,
+      );
     }
     try {
       bootstrapMarker.writeAsStringSync(DateTime.now().toIso8601String());
@@ -280,25 +277,6 @@ final themeColorBackfillProvider = FutureProvider<void>((ref) async {
   if (changed) reload.value++;
 });
 
-/// 启动后把书架里所有书的范围登记到引擎。
-///
-/// 作用:上次应用被杀时浏览器可能还开着,那些窗口现在没人管。
-/// 引擎需要知道"哪个 URL 前缀属于哪本书"才能把窗口认领回来,
-/// 否则孤儿窗口的进度上报会因为映射不到书而被丢弃。
-final adoptProvider = FutureProvider<void>((ref) async {
-  final engine = await ref.watch(engineProvider.future);
-  if (engine is! CdpEngine) return;
-  final store = ref.watch(libraryStoreProvider);
-  final books = await store.loadBooks();
-  for (final b in books) {
-    engine.registerScope(b.id, b.scopePrefix);
-  }
-  try {
-    await engine.adoptOrphanWindows();
-  } catch (_) {
-    // 没有遗留窗口是常态,认领失败不该影响启动。
-  }
-});
 
 
 final recorderProvider = FutureProvider<ProgressRecorder?>((ref) async {
@@ -466,8 +444,22 @@ class _Boot extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final ready = ref.watch(bootstrapProvider);
+    // 同时等引擎就绪再进书架。
+    //
+    // 只等 bootstrap 的话，书架会先渲染，此后 engineProvider 还在初始化，
+    // widget.engine 是 null —— 用户点书只会收到一句"内核正在准备"，
+    // 自动化验收（PAGEREADER_OPEN）更是直接点不到。一起等，
+    // 书架一出现就是可用的。
+    final engineReady = ref.watch(engineProvider);
     // 开发期验证：设置了 PAGEREADER_EXT_PAGE 就打开那个插件页面。
     ref.watch(extensionPageProbeProvider);
+    // 两个都就绪才进书架，否则会短暂出现"点书没反应"的窗口期。
+    if (ready.isLoading || engineReady.isLoading) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF0E0F12),
+        body: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
     return ready.when(
       loading: () => const Scaffold(
         backgroundColor: Color(0xFF0E0F12),
@@ -494,8 +486,6 @@ class _ShelfHost extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     // 关键:watch 一下,记录器才会真正被创建并开始监听导航流。
     final recorder = ref.watch(progressRecorderInstanceProvider).value;
-    // 同时预热浏览器:书架一出现就开始在后台拉起来,点击时无缝衔接。
-    ref.watch(adoptProvider);
     ref.watch(themeColorBackfillProvider);
 
     return QuitGuard(
@@ -503,7 +493,7 @@ class _ShelfHost extends ConsumerWidget {
         // 退出前把每本开着的书都采一次并落库。
         final engine = ref.read(engineProvider).value;
         final store = ref.read(libraryStoreProvider);
-        if (engine is CdpEngine) {
+        if (engine != null) {
           final snapshots = await engine.flushAll();
           for (final s in snapshots) {
             await store.saveProgress(s);

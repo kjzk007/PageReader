@@ -39,11 +39,16 @@
     darkSchemeTextColor: PRESET.text || 'rgb(232, 230, 227)',
     lightSchemeBackgroundColor: 'rgb(255, 255, 255)',
     lightSchemeTextColor: 'rgb(24, 26, 27)',
-    // 这两个不能省：极点（pole）计算会读它们，
-    // 缺了就是 undefined，插值直接失败，表现为"文字色完全没变"。
-    // 算法自身把空串当作"没有第二极点"。
-    secondaryBackgroundColor: '',
-    secondaryTextColor: '',
+    // 极点（pole）计算要读这两个。
+    //
+    // 不能用空串：算法会把 "" 传进 parseColorWithCache，解析失败后
+    // 插值出来的是一个无意义的高饱和色 —— 实测整个 body 背景变成
+    // rgb(0,255,255) 青色。给它们一对「次要背景/次要文字」的实色即可，
+    // 语义上正好对应站点里的卡片、侧栏这类次级区域。
+      secondaryBackgroundColor:
+        PRESET.secondaryBackground || PRESET.background || 'rgb(24, 26, 27)',
+      secondaryTextColor:
+        PRESET.secondaryText || PRESET.text || 'rgb(232, 230, 227)',
     scrollbarColor: '',
     selectionColor: 'auto',
     styleSystemControls: false,
@@ -51,6 +56,11 @@
     darkColorScheme: 'Default',
     immediateModify: false,
   };
+
+  // 错误记录必须在这里初始化 —— 放在 note() 附近的话，第一次异常
+  // 发生在赋值之前，note 内部 arr.length 会再抛一次，把原始错误吞掉。
+  var errors = [];
+  window.__prDarkErrors = errors;
 
   var MAX_ELEMENTS = 6000;
   var BATCH_SIZE = 400;
@@ -71,6 +81,12 @@
     SCRIPT: 1, STYLE: 1, LINK: 1, META: 1, HEAD: 1, TITLE: 1,
     IMG: 1, VIDEO: 1, AUDIO: 1, CANVAS: 1, IFRAME: 1, OBJECT: 1, EMBED: 1,
     SVG: 1, MATH: 1,
+    // 代码块不参与算色 —— 文字和语法高亮必须保持站点原样。
+    //
+    // 语法高亮本身就是配色信息，逐元素改色会把关键字的红、字符串的
+    // 绿全洗掉。但**背景**要跟随主题（见 applyUserOverrides 里的规则）：
+    // 站点普遍给代码块设白底，留一块白在深色页面上很刺眼。
+    PRE: 1, CODE: 1, KBD: 1, SAMP: 1,
   };
 
   var SKIP_SELECTORS = [
@@ -125,6 +141,18 @@
       rules.push('::-moz-selection{background-color:' + sel + ' !important}');
     }
 
+
+    // 代码块：只换背景，文字和语法高亮保持站点原样。
+    //
+    // 高亮是文档的配色信息（关键字红、字符串绿），逐元素算色会洗掉它；
+    // 但背景必须跟随主题 —— 站点给代码块设的白底放在深色页面上很刺眼。
+    var codeBg = PRESET.codeBackground;
+    if (codeBg) {
+      rules.push(
+        'pre,code,kbd,samp{background-color:' + codeBg + ' !important}'
+      );
+    }
+
     // 图片亮度：深底上原图刺眼，这里统一压暗。
     var ib = PRESET.imageBrightness;
     if (typeof ib === 'number' && ib !== 100) {
@@ -153,6 +181,85 @@
   }
 
   // ===== 元素算色 =====
+  /// 按用户设定的亮度/对比度调整**文字色**。
+  ///
+  /// 只作用文字，不作用背景 —— 背景亮度一旦跟着放大，大面积容器
+  /// （main/article 的浅色底）会成片撞到 255，整个页面发白，
+  /// 看起来像"渲染坏了"。用户要的也只是"文字亮一点"。
+  ///
+  /// ── 为什么必须在算色之后做 ──
+  ///
+  /// 引擎的颜色修改算法里根本没有 brightness / contrast 这两个参数
+  /// （它们只在 filter 模式下被 createFilterMatrix 用到），所以这两个
+  /// 滑块以前是死参数。
+  ///
+  /// 但调整必须放在算色**之后**：算法的极点映射假设输入是站点原本的
+  /// 浅色配色，先把它压成中灰再喂进去，会被映射成更暗的颜色 ——
+  /// 实测 h1 从可读的浅灰变成 rgb(29,29,32)，在深底上直接消失。
+  function adjustTextColor(color) {
+    var b = THEME.brightness;
+    var c = THEME.contrast;
+    if (b === 100 && c === 100) return color;
+
+    // 算色函数返回的可能是 rgb 字符串而不是 {r,g,b,a} ——
+    // 直接按对象取值会得到 undefined，算出 NaN，写进 style 时
+    // 浏览器当成无效值整个丢掉，表现为"算色完全不生效"。
+    var rgb = color;
+    if (typeof color === 'string') {
+      rgb = parseColorWithCache(color);
+    }
+    if (!rgb || typeof rgb.r !== 'number') return color;
+
+    var r = rgb.r, g = rgb.g, bl = rgb.b;
+
+    // 亮度：向白/向黑插值，而不是按倍数乘。
+    //
+    // 倍数乘会把接近白的中亮文字直接顶到 255 —— 实测亮度调到 112
+    // 之后，整页文字全变纯白，层次全丢，看起来像"渲染坏了"。
+    // 插值最多只吃掉 30% 的余量，调大调小都还留得住层次。
+    if (b !== 100) {
+      var t = (b - 100) / 100; // 负数=压暗，正数=提亮
+      var k = Math.min(Math.abs(t), 0.6) * 0.5;
+      if (t > 0) {
+        r = r + (255 - r) * k;
+        g = g + (255 - g) * k;
+        bl = bl + (255 - bl) * k;
+      } else {
+        r = r * (1 - k);
+        g = g * (1 - k);
+        bl = bl * (1 - k);
+      }
+    }
+
+    // 对比度：缩放「文字与页面底色」的差值，而不是围绕中灰 128 拉伸。
+    //
+    // 中灰轴心的做法在深色主题下几乎看不出效果 —— 文字本身已经接近
+    // 中亮（rgb(153,158,169)），绕 128 拉伸只挪动十几个色阶。
+    // 改成以底色为基准放大/缩小差值，效果直接对得上"文字和背景的
+    // 反差"，160 时文字明显更亮，20 时明显更暗。
+    if (c !== 100) {
+      var base = null;
+      try {
+        base = parseColorWithCache(THEME.darkSchemeBackgroundColor);
+      } catch (e) {}
+      if (!base || typeof base.r !== 'number') {
+        base = { r: 0, g: 0, b: 0 };
+      }
+      var ct = (c - 100) / 100;
+      var cf = 1 + Math.max(-0.85, Math.min(1.2, ct));
+      r = base.r + (r - base.r) * cf;
+      g = base.g + (g - base.g) * cf;
+      bl = base.b + (bl - base.b) * cf;
+    }
+
+    return {
+      r: Math.max(0, Math.min(255, r)),
+      g: Math.max(0, Math.min(255, g)),
+      b: Math.max(0, Math.min(255, bl)),
+      a: rgb.a,
+    };
+  }
+
   /// 是不是需要套用用户链接色的元素。
   ///
   /// 只排除真正的按钮（class 含 btn/button、role=button），其余链接一律上色。
@@ -179,6 +286,14 @@
   function processElement(el) {
     if (processed.has(el)) return;
     processed.add(el);
+    try {
+      processElementInner(el);
+    } catch (e) {
+      note(errors, 'outer:' + (e && e.message));
+    }
+  }
+
+  function processElementInner(el) {
     if (shouldSkip(el)) return;
 
     var cs;
@@ -191,12 +306,24 @@
     if (cs.display === 'none' || cs.visibility === 'hidden') return;
 
     // 每一段单独兜住：算法在个别颜色格式上失败，不能让整个遍历停掉。
+    //
+    // ── html / body 的背景必须跳过 ──
+    //
+    // 占位样式已经给 html,body 设了主题底色（!important）。如果这里
+    // 再按"站点的浅色背景"算一遍，读到的 cs.backgroundColor 其实是
+    // 占位刷上去的那层颜色 —— 等于把用户选的底色又当输入算一次，
+    // 蓝色会被映射成黑色，页面变成"外面蓝、里面黑"。
+    // 这一层的背景完全交给占位，这里只处理它们的文字色。
+    var isRootContainer =
+      el === document.documentElement || el === document.body;
     try {
-      var bgColor = parseColorWithCache(cs.backgroundColor);
-      if (bgColor && bgColor.a > 0.02) {
-        var newBg = modifyBackgroundColor(bgColor, THEME);
-        var bgCss = toCss(newBg);
-        if (bgCss) el.style.setProperty('background-color', bgCss, 'important');
+      if (!isRootContainer) {
+        var bgColor = parseColorWithCache(cs.backgroundColor);
+        if (bgColor && bgColor.a > 0.02) {
+          var newBg = modifyBackgroundColor(bgColor, THEME);
+          var bgCss = toCss(newBg);
+          if (bgCss) el.style.setProperty('background-color', bgCss, 'important');
+        }
       }
     } catch (e) {
       note(errors, 'bg:' + (e && e.message));
@@ -211,9 +338,9 @@
       if (isUserLink(el)) {
         el.style.setProperty('color', PRESET.link, 'important');
       } else {
-        var fgColor = parseColorWithCache(cs.color);
-        if (fgColor && fgColor.a > 0.02) {
-          var newFg = modifyForegroundColor(fgColor, THEME);
+        var rawFg = parseColorWithCache(cs.color);
+        if (rawFg && rawFg.a > 0.02) {
+          var newFg = adjustTextColor(modifyForegroundColor(rawFg, THEME));
           var fgCss = toCss(newFg);
           if (fgCss) el.style.setProperty('color', fgCss, 'important');
         }
@@ -234,10 +361,10 @@
   }
 
   // 错误只记前若干条，避免刷爆内存
-  var errors = [];
   function note(arr, msg) {
-    if (arr.length < 5 && msg) arr.push(msg);
-    window.__prDarkErrors = arr;
+    try {
+      if (arr && arr.length < 8 && msg) arr.push(msg);
+    } catch (e) {}
   }
 
   // ===== 代码块：只保可读性，不动配色 =====

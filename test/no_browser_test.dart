@@ -74,8 +74,7 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
-
-  testWidgets('没有引擎时点书给出提示', (tester) async {
+  testWidgets('没有引擎时点书给出准确提示', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: BookshelfPage(store: S([makeBook()]), engine: null),
@@ -87,17 +86,17 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    // 应该弹出说明对话框,而不是一句"找不到"
+    // 内嵌内核没有外部依赖，"找不到浏览器"这种说法已经不成立了。
+    // 引擎为 null 只可能是还在初始化，提示必须说清这一点。
     expect(
-      find.text('没有找到浏览器'),
+      find.textContaining('内核正在准备'),
       findsOneWidget,
-      reason: '检测失败时要给出可操作的说明',
+      reason: '引擎未就绪时要说明是"正在准备"，而不是让用户去装浏览器'
     );
-    expect(find.textContaining('Edge'), findsWidgets);
-    expect(find.textContaining('Chrome'), findsWidgets);
-    expect(find.textContaining('重新打开'), findsWidgets);
-    expect(find.text('知道了'), findsOneWidget);
-    // 不能出现异常堆栈类的文案
+    // 不能再出现要求用户装浏览器的文案
+    expect(find.textContaining('Edge'), findsNothing);
+    expect(find.textContaining('Chrome'), findsNothing);
+    expect(find.textContaining('没有找到浏览器'), findsNothing);
     expect(find.textContaining('Exception'), findsNothing);
 
     await tester.pumpWidget(const SizedBox());

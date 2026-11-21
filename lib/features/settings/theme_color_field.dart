@@ -33,73 +33,70 @@ class ThemeColorField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: InkWell(
-        onTap: () async {
-          final picked = await showDialog<String>(
-            context: context,
-            builder: (_) => ThemeColorPickerDialog(
-              label: label,
-              initial: value,
-            ),
-          );
-          if (picked != null && picked != value) onChanged(picked);
-        },
-        borderRadius: BorderRadius.circular(6),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1C1E22),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: const Color(0xFF2C3038)),
+    return InkWell(
+      onTap: () async {
+        final picked = await showDialog<String>(
+          context: context,
+          builder: (_) => ThemeColorPickerDialog(
+            label: label,
+            initial: value,
           ),
-          child: Row(
-            children: [
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Color(0xFFE3E5E8),
-                  fontSize: 13,
-                  fontFamily: 'Microsoft YaHei',
-                ),
+        );
+        if (picked != null && picked != value) onChanged(picked);
+      },
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1C1E22),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFF2C3038)),
+        ),
+        // 竖排：三列并排时横排会挤成一团，标签和色块上下叠才看得清。
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFFE3E5E8),
+                fontSize: 12,
+                fontFamily: 'Microsoft YaHei',
               ),
-              if (hint != null) ...[
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Container(
+                  width: 22,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: colorOf(value),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: const Color(0xFF4A5058),
+                      width: 1,
+                    ),
+                  ),
+                ),
                 const SizedBox(width: 6),
-                Text(
-                  hint!,
-                  style: const TextStyle(
-                    color: Color(0xFF6B7280),
-                    fontSize: 11,
-                    fontFamily: 'Microsoft YaHei',
+                Expanded(
+                  child: Text(
+                    value.toUpperCase(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF8A9099),
+                      fontSize: 10.5,
+                      fontFamily: 'Consolas',
+                    ),
                   ),
                 ),
               ],
-              const Spacer(),
-              Text(
-                value.toUpperCase(),
-                style: const TextStyle(
-                  color: Color(0xFF8A9099),
-                  fontSize: 12,
-                  fontFamily: 'Consolas',
-                ),
-              ),
-              const SizedBox(width: 10),
-              // 色块本身就当按钮：一眼看到当前颜色。
-              Container(
-                width: 34,
-                height: 24,
-                decoration: BoxDecoration(
-                  color: colorOf(value),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(
-                    color: const Color(0xFF4A5058),
-                    width: 1,
-                  ),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

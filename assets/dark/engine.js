@@ -190,11 +190,6 @@
         return hsl;
     }
 
-    function clearColorCache() {
-        hslaParseCache.clear();
-        rgbaParseCache.clear();
-    }
-
     function hslToRGB({h, s, l, a = 1}) {
         if (s === 0) {
             const [r, b, g] = [l, l, l].map((x) => Math.round(x * 255));
@@ -278,14 +273,6 @@
                 return `${x < 16 ? "0" : ""}${x.toString(16)}`;
             })
             .join("")}`;
-    }
-
-    function hslToString(hsl) {
-        const {h, s, l, a} = hsl;
-        if (a != null && a < 1) {
-            return `hsla(${toFixed(h)}, ${toFixed(s * 100)}%, ${toFixed(l * 100)}%, ${toFixed(a, 2)})`;
-        }
-        return `hsl(${toFixed(h)}, ${toFixed(s * 100)}%, ${toFixed(l * 100)}%)`;
     }
 
     const rgbMatch = /^rgba?\([^\(\)]+\)$/;
@@ -436,93 +423,6 @@
     const rgbRange = [255, 255, 255, 1];
 
     const rgbUnits = {"%": 100};
-
-    function getRGBValues(input) {
-        const CHAR_CODE_0 = 48;
-        const length = input.length;
-        let i = 0;
-        let digitsCount = 0;
-        let digitSequence = false;
-        let floatDigitsCount = -1;
-        let delimiter = C_SPACE;
-        let channel = -1;
-        let result = null;
-        while (i < length) {
-            const c = input.charCodeAt(i);
-            if ((c >= C_0 && c <= C_9) || c === C_DOT) {
-                if (!digitSequence) {
-                    digitSequence = true;
-                    digitsCount = 0;
-                    floatDigitsCount = -1;
-                    channel++;
-                    if (channel === 3 && result) {
-                        result[3] = 0;
-                    }
-                    if (channel > 3) {
-                        return null;
-                    }
-                }
-                if (c === C_DOT) {
-                    if (floatDigitsCount > 0) {
-                        return null;
-                    }
-                    floatDigitsCount = 0;
-                } else {
-                    const d = c - CHAR_CODE_0;
-                    if (!result) {
-                        result = [0, 0, 0, 1];
-                    }
-                    if (floatDigitsCount > -1) {
-                        floatDigitsCount++;
-                        result[channel] += d / 10 ** floatDigitsCount;
-                    } else {
-                        digitsCount++;
-                        if (digitsCount > 3) {
-                            return null;
-                        }
-                        result[channel] = result[channel] * 10 + d;
-                    }
-                }
-            } else if (c === C_PERCENT) {
-                if (
-                    channel < 0 ||
-                    channel > 3 ||
-                    delimiter !== C_SPACE ||
-                    !result
-                ) {
-                    return null;
-                }
-                result[channel] =
-                    channel < 3
-                        ? Math.round((result[channel] * 255) / 100)
-                        : result[channel] / 100;
-                digitSequence = false;
-            } else {
-                digitSequence = false;
-                if (c === C_SPACE) {
-                    if (channel === 0) {
-                        delimiter = c;
-                    }
-                } else if (c === C_COMMA) {
-                    if (channel === -1) {
-                        return null;
-                    }
-                    delimiter = C_COMMA;
-                } else if (c === C_SLASH) {
-                    if (channel !== 2 || delimiter !== C_SPACE) {
-                        return null;
-                    }
-                } else {
-                    return null;
-                }
-            }
-            i++;
-        }
-        if (channel < 2 || channel > 3) {
-            return null;
-        }
-        return result;
-    }
 
     function parseRGB($rgb) {
         const [r, g, b, a = 1] = getNumbersFromString($rgb, rgbRange, rgbUnits);
@@ -827,6 +727,10 @@
         return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
     }
 
+    let canvas$1;
+
+    let context$1;
+
     function domParseColor($color) {
         if (!context$1) {
             canvas$1 = document.createElement("canvas");
@@ -862,22 +766,6 @@
             }
         }
         return result;
-    }
-
-    function cachedFactory(factory, size) {
-        const cache = new Map();
-        return (key) => {
-            if (cache.has(key)) {
-                return cache.get(key);
-            }
-            const value = factory(key);
-            cache.set(key, value);
-            if (cache.size > size) {
-                const first = cache.keys().next().value;
-                cache.delete(first);
-            }
-            return value;
-        };
     }
 
     const parsedURLCache = new Map();
@@ -1064,14 +952,7 @@
         return {h: hx, s, l: lx, a};
     }
 
-    function extendThemeCacheKeys(keys) {
-        const extendedKeys = ["secondaryBackgroundColor", "secondaryTextColor"];
-        extendedKeys.forEach((key) => {
-            if (!keys.includes(key)) {
-                keys.push(key);
-            }
-        });
-    }
+    let observer$1;
 
     const excludedSelectors = [
         "pre",
@@ -1102,22 +983,6 @@
         ".typcn",
         '[class*="vjs-"]'
     ];
-
-    function createTextStyle(config) {
-        const lines = [];
-        lines.push(`*:not(${excludedSelectors.join(", ")}) {`);
-        if (config.useFont && config.fontFamily) {
-            lines.push(`  font-family: ${config.fontFamily} !important;`);
-        }
-        if (config.textStroke > 0) {
-            lines.push(
-                `  -webkit-text-stroke: ${config.textStroke}px !important;`
-            );
-            lines.push(`  text-stroke: ${config.textStroke}px !important;`);
-        }
-        lines.push("}");
-        return lines.join("\n");
-    }
 
     function createFilterMatrix(config) {
         let m = Matrix.identity();
@@ -1241,110 +1106,7 @@
         }
     }
 
-    function throttle(callback) {
-        let pending = false;
-        let frameId = null;
-        let lastArgs;
-        const throttled = (...args) => {
-            lastArgs = args;
-            if (frameId) {
-                pending = true;
-            } else {
-                callback(...lastArgs);
-                frameId = requestAnimationFrame(() => {
-                    frameId = null;
-                    if (pending) {
-                        callback(...lastArgs);
-                        pending = false;
-                    }
-                });
-            }
-        };
-        const cancel = () => {
-            cancelAnimationFrame(frameId);
-            pending = false;
-            frameId = null;
-        };
-        return Object.assign(throttled, {cancel});
-    }
-
-    function createAsyncTasksQueue() {
-        const tasks = [];
-        let frameId = null;
-        function runTasks() {
-            let task;
-            while ((task = tasks.shift())) {
-                task();
-            }
-            frameId = null;
-        }
-        function add(task) {
-            tasks.push(task);
-            if (!frameId) {
-                frameId = requestAnimationFrame(runTasks);
-            }
-        }
-        function cancel() {
-            tasks.splice(0);
-            cancelAnimationFrame(frameId);
-            frameId = null;
-        }
-        return {add, cancel};
-    }
-
-    function logInfo(...args) {}
-
     function logWarn(...args) {}
-
-    function createNodeAsap({
-        selectNode,
-        createNode,
-        updateNode,
-        selectTarget,
-        createTarget,
-        isTargetMutation
-    }) {
-        const target = selectTarget();
-        if (target) {
-            const prev = selectNode();
-            if (prev) {
-                updateNode(prev);
-            } else {
-                createNode(target);
-            }
-        } else {
-            const observer = new MutationObserver((mutations) => {
-                const mutation = mutations.find(isTargetMutation);
-                if (mutation) {
-                    unsubscribe();
-                    const target = selectTarget();
-                    selectNode() || createNode(target);
-                }
-            });
-            const ready = () => {
-                if (document.readyState !== "complete") {
-                    return;
-                }
-                unsubscribe();
-                const target = selectTarget() || createTarget();
-                selectNode() || createNode(target);
-            };
-            const unsubscribe = () => {
-                document.removeEventListener("readystatechange", ready);
-                observer.disconnect();
-            };
-            if (document.readyState === "complete") {
-                ready();
-            } else {
-                document.addEventListener("readystatechange", ready);
-                observer.observe(document, {childList: true, subtree: true});
-            }
-        }
-    }
-
-    function removeNode(node) {
-        node && node.parentNode && node.parentNode.removeChild(node);
-    }
 
     function iterateShadowHosts(root, iterator) {
         if (root == null) {
@@ -1381,10 +1143,6 @@
         );
     }
 
-    function setIsDOMReady(newFunc) {
-        isDOMReady = newFunc;
-    }
-
     const readyStateListeners = new Set();
 
     function addDOMReadyListener(listener) {
@@ -1393,10 +1151,6 @@
 
     function removeDOMReadyListener(listener) {
         readyStateListeners.delete(listener);
-    }
-
-    function isReadyStateComplete() {
-        return document.readyState === "complete";
     }
 
     const HUGE_MUTATIONS_COUNT = 1000;
@@ -1456,60 +1210,6 @@
     const optimizedTreeObservers = new Map();
 
     const optimizedTreeCallbacks = new WeakMap();
-
-    function createOptimizedTreeObserver(root, callbacks) {
-        let observer;
-        let observerCallbacks;
-        let domReadyListener;
-        if (optimizedTreeObservers.has(root)) {
-            observer = optimizedTreeObservers.get(root);
-            observerCallbacks = optimizedTreeCallbacks.get(observer);
-        } else {
-            let hadHugeMutationsBefore = false;
-            let subscribedForReadyState = false;
-            observer = new MutationObserver((mutations) => {
-                if (isHugeMutation(mutations)) {
-                    if (!hadHugeMutationsBefore || isDOMReady()) {
-                        observerCallbacks.forEach(({onHugeMutations}) =>
-                            onHugeMutations(root)
-                        );
-                    } else if (!subscribedForReadyState) {
-                        domReadyListener = () =>
-                            observerCallbacks.forEach(({onHugeMutations}) =>
-                                onHugeMutations(root)
-                            );
-                        addDOMReadyListener(domReadyListener);
-                        subscribedForReadyState = true;
-                    }
-                    hadHugeMutationsBefore = true;
-                } else {
-                    const elementsOperations =
-                        getElementsTreeOperations(mutations);
-                    observerCallbacks.forEach(({onMinorMutations}) =>
-                        onMinorMutations(root, elementsOperations)
-                    );
-                }
-            });
-            observer.observe(root, {childList: true, subtree: true});
-            optimizedTreeObservers.set(root, observer);
-            observerCallbacks = new Set();
-            optimizedTreeCallbacks.set(observer, observerCallbacks);
-        }
-        observerCallbacks.add(callbacks);
-        return {
-            disconnect() {
-                observerCallbacks.delete(callbacks);
-                if (domReadyListener) {
-                    removeDOMReadyListener(domReadyListener);
-                }
-                if (observerCallbacks.size === 0) {
-                    observer.disconnect();
-                    optimizedTreeCallbacks.delete(observer);
-                    optimizedTreeObservers.delete(root);
-                }
-            }
-        };
-    }
 
     function iterateCSSRules(
         rules,
@@ -1617,41 +1317,6 @@
         "outline-color"
     ];
 
-    function iterateCSSDeclarations(style, iterate) {
-        const cssText = style.cssText;
-        if (cssText.includes("var(")) {
-            {
-                shorthandVarDependantProperties.forEach((prop) => {
-                    const val = style.getPropertyValue(prop);
-                    if (val && val.includes("var(")) {
-                        iterate(prop, val);
-                    }
-                });
-            }
-        }
-        if (
-            (cssText.includes("background-color: ;") ||
-                cssText.includes("background-image: ;")) &&
-            !style.getPropertyValue("background")
-        ) {
-            handleEmptyShorthand("background", style, iterate);
-        }
-        if (
-            cssText.includes("border-") &&
-            cssText.includes("-color: ;") &&
-            !style.getPropertyValue("border")
-        ) {
-            handleEmptyShorthand("border", style, iterate);
-        }
-        forEach(style, (property) => {
-            const value = style.getPropertyValue(property).trim();
-            if (!value) {
-                return;
-            }
-            iterate(property, value);
-        });
-    }
-
     function handleEmptyShorthand(shorthand, style, iterate) {
         const parentRule = style.parentRule;
         if (isStyleRule(parentRule)) {
@@ -1690,32 +1355,7 @@
             .replace(/(?:\\(.))/g, "$1");
     }
 
-    function getCSSBaseBath(url) {
-        const cssURL = parseURL(url);
-        return `${cssURL.origin}${cssURL.pathname.replace(/\?.*$/, "").replace(/(\/)([^\/]+)$/i, "$1")}`;
-    }
-
-    function replaceCSSRelativeURLsWithAbsolute($css, cssBasePath) {
-        return $css.replace(cssURLRegex, (match) => {
-            try {
-                const url = getCSSURLValue(match);
-                const absoluteURL = getAbsoluteURL(cssBasePath, url);
-                const escapedURL = absoluteURL.replaceAll("'", "\\'");
-                return `url('${escapedURL}')`;
-            } catch (err) {
-                logWarn(
-                    "Not able to replace relative URL with Absolute URL, skipping"
-                );
-                return match;
-            }
-        });
-    }
-
     const fontFaceRegex = /@font-face\s*{[^}]*}/g;
-
-    function replaceCSSFontFace($css) {
-        return $css.replace(fontFaceRegex, "");
-    }
 
     const styleRules = new WeakSet();
 
@@ -1828,18 +1468,6 @@
         return false;
     }
 
-    function getRuleMediaText(rule) {
-        const media = [];
-        let parent = rule.parentRule;
-        while (parent) {
-            if (isMediaRule(parent)) {
-                media.unshift(parent.media.mediaText);
-            }
-            parent = parent.parentRule;
-        }
-        return media.join(" and ");
-    }
-
     let variablesSheet;
 
     const registeredColors = new Map();
@@ -1856,28 +1484,6 @@
             }
         }
         return null;
-    }
-
-    function registerVariablesSheet(sheet) {
-        variablesSheet = sheet;
-        const rule = getVariablesRule();
-        if (!rule) {
-            return;
-        }
-        const types = ["background", "text", "border"];
-        registeredColors.forEach((registered) => {
-            types.forEach((type) => {
-                if (registered[type]) {
-                    const {variable, value} = registered[type];
-                    rule.style.setProperty(variable, value);
-                }
-            });
-        });
-    }
-
-    function releaseVariablesSheet() {
-        variablesSheet = null;
-        clearColorPalette();
     }
 
     function getRegisteredVariableValue(type, registered) {
@@ -1909,24 +1515,6 @@
         return getRegisteredVariableValue(type, registered);
     }
 
-    function getColorPalette() {
-        const background = [];
-        const border = [];
-        const text = [];
-        registeredColors.forEach((registered) => {
-            if (registered.background) {
-                background.push(registered.parsed);
-            }
-            if (registered.border) {
-                border.push(registered.parsed);
-            }
-            if (registered.text) {
-                text.push(registered.parsed);
-            }
-        });
-        return {background, border, text};
-    }
-
     function clearColorPalette() {
         registeredColors.clear();
     }
@@ -1948,10 +1536,6 @@
     }
 
     const colorModificationCache = new Map();
-
-    function clearColorModificationCache() {
-        colorModificationCache.clear();
-    }
 
     const rgbCacheKeys = ["r", "g", "b", "a"];
 
@@ -2182,14 +1766,6 @@
         return modifyAndRegisterColor("border", rgb, theme, _modifyBorderColor);
     }
 
-    function modifyShadowColor(rgb, theme) {
-        return modifyBackgroundColor(rgb, theme);
-    }
-
-    function modifyGradientColor(rgb, theme) {
-        return modifyBackgroundColor(rgb, theme);
-    }
-
     const gradientLength = "gradient".length;
 
     const conicGradient = "conic-";
@@ -2200,66 +1776,13 @@
 
     const linearGradient = "linear-";
 
-    function parseGradient(value) {
-        const result = [];
-        let index = 0;
-        let startIndex = conicGradient.length;
-        while ((index = value.indexOf("gradient", startIndex)) !== -1) {
-            let typeGradient;
-            [linearGradient, radialGradient, conicGradient].find(
-                (possibleType) => {
-                    if (index - possibleType.length >= 0) {
-                        const possibleGradient = value.substring(
-                            index - possibleType.length,
-                            index
-                        );
-                        if (possibleGradient === possibleType) {
-                            if (
-                                value.slice(
-                                    index - possibleType.length - 10,
-                                    index - possibleType.length - 1
-                                ) === "repeating"
-                            ) {
-                                typeGradient = `repeating-${possibleType}gradient`;
-                                return true;
-                            }
-                            if (
-                                value.slice(
-                                    index - possibleType.length - 8,
-                                    index - possibleType.length - 1
-                                ) === "-webkit"
-                            ) {
-                                typeGradient = `-webkit-${possibleType}gradient`;
-                                return true;
-                            }
-                            typeGradient = `${possibleType}gradient`;
-                            return true;
-                        }
-                    }
-                }
-            );
-            if (!typeGradient) {
-                break;
-            }
-            const {start, end} = getParenthesesRange(
-                value,
-                index + gradientLength
-            );
-            const match = value.substring(start + 1, end - 1);
-            startIndex = end + 1 + conicGradientLength;
-            result.push({
-                typeGradient,
-                match,
-                offset: typeGradient.length + 2,
-                index: index - typeGradient.length + gradientLength,
-                hasComma: true
-            });
-        }
-        if (result.length) {
-            result[result.length - 1].hasComma = false;
-        }
-        return result;
-    }
+    const resolvers$1 = new Map();
+
+    let addFilterSelector$1 = null;
+
+    let canUseSheetProxy$1 = false;
+
+    const overrides$1 = new WeakSet();
 
     const hostsBreakingOnStylePosition = [
         "chat.google.com",
@@ -2275,6 +1798,8 @@
     const mode = hostsBreakingOnStylePosition.includes(location.hostname)
         ? "away"
         : "next";
+
+    let prevTheme$1 = null;
 
   // ===== 预设（由宿主在注入时填入）=====
   var PRESET = window.__PR_DARK_PRESET;
@@ -2299,11 +1824,16 @@
     darkSchemeTextColor: PRESET.text || 'rgb(232, 230, 227)',
     lightSchemeBackgroundColor: 'rgb(255, 255, 255)',
     lightSchemeTextColor: 'rgb(24, 26, 27)',
-    // 这两个不能省：极点（pole）计算会读它们，
-    // 缺了就是 undefined，插值直接失败，表现为"文字色完全没变"。
-    // 算法自身把空串当作"没有第二极点"。
-    secondaryBackgroundColor: '',
-    secondaryTextColor: '',
+    // 极点（pole）计算要读这两个。
+    //
+    // 不能用空串：算法会把 "" 传进 parseColorWithCache，解析失败后
+    // 插值出来的是一个无意义的高饱和色 —— 实测整个 body 背景变成
+    // rgb(0,255,255) 青色。给它们一对「次要背景/次要文字」的实色即可，
+    // 语义上正好对应站点里的卡片、侧栏这类次级区域。
+      secondaryBackgroundColor:
+        PRESET.secondaryBackground || PRESET.background || 'rgb(24, 26, 27)',
+      secondaryTextColor:
+        PRESET.secondaryText || PRESET.text || 'rgb(232, 230, 227)',
     scrollbarColor: '',
     selectionColor: 'auto',
     styleSystemControls: false,
@@ -2311,6 +1841,11 @@
     darkColorScheme: 'Default',
     immediateModify: false,
   };
+
+  // 错误记录必须在这里初始化 —— 放在 note() 附近的话，第一次异常
+  // 发生在赋值之前，note 内部 arr.length 会再抛一次，把原始错误吞掉。
+  var errors = [];
+  window.__prDarkErrors = errors;
 
   var MAX_ELEMENTS = 6000;
   var BATCH_SIZE = 400;
@@ -2331,6 +1866,12 @@
     SCRIPT: 1, STYLE: 1, LINK: 1, META: 1, HEAD: 1, TITLE: 1,
     IMG: 1, VIDEO: 1, AUDIO: 1, CANVAS: 1, IFRAME: 1, OBJECT: 1, EMBED: 1,
     SVG: 1, MATH: 1,
+    // 代码块不参与算色 —— 文字和语法高亮必须保持站点原样。
+    //
+    // 语法高亮本身就是配色信息，逐元素改色会把关键字的红、字符串的
+    // 绿全洗掉。但**背景**要跟随主题（见 applyUserOverrides 里的规则）：
+    // 站点普遍给代码块设白底，留一块白在深色页面上很刺眼。
+    PRE: 1, CODE: 1, KBD: 1, SAMP: 1,
   };
 
   var SKIP_SELECTORS = [
@@ -2385,6 +1926,18 @@
       rules.push('::-moz-selection{background-color:' + sel + ' !important}');
     }
 
+
+    // 代码块：只换背景，文字和语法高亮保持站点原样。
+    //
+    // 高亮是文档的配色信息（关键字红、字符串绿），逐元素算色会洗掉它；
+    // 但背景必须跟随主题 —— 站点给代码块设的白底放在深色页面上很刺眼。
+    var codeBg = PRESET.codeBackground;
+    if (codeBg) {
+      rules.push(
+        'pre,code,kbd,samp{background-color:' + codeBg + ' !important}'
+      );
+    }
+
     // 图片亮度：深底上原图刺眼，这里统一压暗。
     var ib = PRESET.imageBrightness;
     if (typeof ib === 'number' && ib !== 100) {
@@ -2413,6 +1966,85 @@
   }
 
   // ===== 元素算色 =====
+  /// 按用户设定的亮度/对比度调整**文字色**。
+  ///
+  /// 只作用文字，不作用背景 —— 背景亮度一旦跟着放大，大面积容器
+  /// （main/article 的浅色底）会成片撞到 255，整个页面发白，
+  /// 看起来像"渲染坏了"。用户要的也只是"文字亮一点"。
+  ///
+  /// ── 为什么必须在算色之后做 ──
+  ///
+  /// 引擎的颜色修改算法里根本没有 brightness / contrast 这两个参数
+  /// （它们只在 filter 模式下被 createFilterMatrix 用到），所以这两个
+  /// 滑块以前是死参数。
+  ///
+  /// 但调整必须放在算色**之后**：算法的极点映射假设输入是站点原本的
+  /// 浅色配色，先把它压成中灰再喂进去，会被映射成更暗的颜色 ——
+  /// 实测 h1 从可读的浅灰变成 rgb(29,29,32)，在深底上直接消失。
+  function adjustTextColor(color) {
+    var b = THEME.brightness;
+    var c = THEME.contrast;
+    if (b === 100 && c === 100) return color;
+
+    // 算色函数返回的可能是 rgb 字符串而不是 {r,g,b,a} ——
+    // 直接按对象取值会得到 undefined，算出 NaN，写进 style 时
+    // 浏览器当成无效值整个丢掉，表现为"算色完全不生效"。
+    var rgb = color;
+    if (typeof color === 'string') {
+      rgb = parseColorWithCache(color);
+    }
+    if (!rgb || typeof rgb.r !== 'number') return color;
+
+    var r = rgb.r, g = rgb.g, bl = rgb.b;
+
+    // 亮度：向白/向黑插值，而不是按倍数乘。
+    //
+    // 倍数乘会把接近白的中亮文字直接顶到 255 —— 实测亮度调到 112
+    // 之后，整页文字全变纯白，层次全丢，看起来像"渲染坏了"。
+    // 插值最多只吃掉 30% 的余量，调大调小都还留得住层次。
+    if (b !== 100) {
+      var t = (b - 100) / 100; // 负数=压暗，正数=提亮
+      var k = Math.min(Math.abs(t), 0.6) * 0.5;
+      if (t > 0) {
+        r = r + (255 - r) * k;
+        g = g + (255 - g) * k;
+        bl = bl + (255 - bl) * k;
+      } else {
+        r = r * (1 - k);
+        g = g * (1 - k);
+        bl = bl * (1 - k);
+      }
+    }
+
+    // 对比度：缩放「文字与页面底色」的差值，而不是围绕中灰 128 拉伸。
+    //
+    // 中灰轴心的做法在深色主题下几乎看不出效果 —— 文字本身已经接近
+    // 中亮（rgb(153,158,169)），绕 128 拉伸只挪动十几个色阶。
+    // 改成以底色为基准放大/缩小差值，效果直接对得上"文字和背景的
+    // 反差"，160 时文字明显更亮，20 时明显更暗。
+    if (c !== 100) {
+      var base = null;
+      try {
+        base = parseColorWithCache(THEME.darkSchemeBackgroundColor);
+      } catch (e) {}
+      if (!base || typeof base.r !== 'number') {
+        base = { r: 0, g: 0, b: 0 };
+      }
+      var ct = (c - 100) / 100;
+      var cf = 1 + Math.max(-0.85, Math.min(1.2, ct));
+      r = base.r + (r - base.r) * cf;
+      g = base.g + (g - base.g) * cf;
+      bl = base.b + (bl - base.b) * cf;
+    }
+
+    return {
+      r: Math.max(0, Math.min(255, r)),
+      g: Math.max(0, Math.min(255, g)),
+      b: Math.max(0, Math.min(255, bl)),
+      a: rgb.a,
+    };
+  }
+
   /// 是不是需要套用用户链接色的元素。
   ///
   /// 只排除真正的按钮（class 含 btn/button、role=button），其余链接一律上色。
@@ -2439,6 +2071,14 @@
   function processElement(el) {
     if (processed.has(el)) return;
     processed.add(el);
+    try {
+      processElementInner(el);
+    } catch (e) {
+      note(errors, 'outer:' + (e && e.message));
+    }
+  }
+
+  function processElementInner(el) {
     if (shouldSkip(el)) return;
 
     var cs;
@@ -2451,12 +2091,24 @@
     if (cs.display === 'none' || cs.visibility === 'hidden') return;
 
     // 每一段单独兜住：算法在个别颜色格式上失败，不能让整个遍历停掉。
+    //
+    // ── html / body 的背景必须跳过 ──
+    //
+    // 占位样式已经给 html,body 设了主题底色（!important）。如果这里
+    // 再按"站点的浅色背景"算一遍，读到的 cs.backgroundColor 其实是
+    // 占位刷上去的那层颜色 —— 等于把用户选的底色又当输入算一次，
+    // 蓝色会被映射成黑色，页面变成"外面蓝、里面黑"。
+    // 这一层的背景完全交给占位，这里只处理它们的文字色。
+    var isRootContainer =
+      el === document.documentElement || el === document.body;
     try {
-      var bgColor = parseColorWithCache(cs.backgroundColor);
-      if (bgColor && bgColor.a > 0.02) {
-        var newBg = modifyBackgroundColor(bgColor, THEME);
-        var bgCss = toCss(newBg);
-        if (bgCss) el.style.setProperty('background-color', bgCss, 'important');
+      if (!isRootContainer) {
+        var bgColor = parseColorWithCache(cs.backgroundColor);
+        if (bgColor && bgColor.a > 0.02) {
+          var newBg = modifyBackgroundColor(bgColor, THEME);
+          var bgCss = toCss(newBg);
+          if (bgCss) el.style.setProperty('background-color', bgCss, 'important');
+        }
       }
     } catch (e) {
       note(errors, 'bg:' + (e && e.message));
@@ -2471,9 +2123,9 @@
       if (isUserLink(el)) {
         el.style.setProperty('color', PRESET.link, 'important');
       } else {
-        var fgColor = parseColorWithCache(cs.color);
-        if (fgColor && fgColor.a > 0.02) {
-          var newFg = modifyForegroundColor(fgColor, THEME);
+        var rawFg = parseColorWithCache(cs.color);
+        if (rawFg && rawFg.a > 0.02) {
+          var newFg = adjustTextColor(modifyForegroundColor(rawFg, THEME));
           var fgCss = toCss(newFg);
           if (fgCss) el.style.setProperty('color', fgCss, 'important');
         }
@@ -2494,10 +2146,10 @@
   }
 
   // 错误只记前若干条，避免刷爆内存
-  var errors = [];
   function note(arr, msg) {
-    if (arr.length < 5 && msg) arr.push(msg);
-    window.__prDarkErrors = arr;
+    try {
+      if (arr && arr.length < 8 && msg) arr.push(msg);
+    } catch (e) {}
   }
 
   // ===== 代码块：只保可读性，不动配色 =====

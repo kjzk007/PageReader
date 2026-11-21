@@ -22,6 +22,8 @@ migrate_working_dir/
 # VS Code which you may wish to be included in version control, so this line
 # is commented out by default.
 #.vscode/
+# 编辑器本地配置：含绝对路径（cmake.sourceDirectory），因机器而异
+/.vscode/
 
 # Flutter/Dart/Pub related
 **/doc/api/
@@ -92,3 +94,5 @@ test-run/
 /_backup-*/
 # 打包产物（走 GitHub Release，不进仓库）
 _pkg/
+# WebView2 在工作目录留下的缓存（数据实际存在 %APPDATA%）
+*.WebView2/

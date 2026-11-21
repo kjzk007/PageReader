@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import '../../engine/desktop/cdp_engine.dart';
 import '../domain/models.dart';
 import '../domain/url_normalizer.dart';
 import '../ports/ports.dart';
@@ -49,15 +48,8 @@ class ProgressRecorder {
     // 用 --app=<url> 打开时,页面加载发生在我们连上 CDP 之前,
     // frameNavigated 收不到。所以引擎打开完成后主动通知一次,
     // 这里立刻记一条,保证"打开过"就至少有一个基线。
-    final e = engine;
-    if (e is CdpEngine) {
-      e.onBookOpened = (bookId) {
-        _currentBookId = bookId;
-        _enteredAt = DateTime.now();
-        _pending?.cancel();
-        _pending = Timer(const Duration(milliseconds: 1500), _collectCurrent);
-      };
-    }
+    // 内嵌内核在页面加载完成后会主动上报一次位置（__prReport），
+    // 所以不需要像外部浏览器那样额外挂一个"打开完成"的钩子。
   }
 
   // ---------------------------------------------------------------- 上报

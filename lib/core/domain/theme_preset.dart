@@ -17,6 +17,8 @@ class ThemePreset {
     this.text = '#d8dade',
     this.link = '#5ac8fa',
     this.selection = '#2f6f8f',
+    this.secondaryBackground = '#1a1d23',
+    this.secondaryText = '#a8b0bc',
     this.brightness = 100,
     this.contrast = 100,
     this.imageBrightness = 100,
@@ -39,6 +41,16 @@ class ThemePreset {
 
   /// 选中文本的背景色（#RRGGBB）。
   final String selection;
+
+  /// 次级背景色（#RRGGBB）：卡片、表格头、侧栏这类
+  /// 「比页面主底色深/浅一档」的区域。
+  ///
+  /// 独立成一个可调项，而不是从主底色推导 —— 派生规则无论怎么写
+  /// 都会在某些站点上不对，交给用户直接选最省事。
+  final String secondaryBackground;
+
+  /// 次级文字色（#RRGGBB）：说明文字、页脚、表格次要列。
+  final String secondaryText;
 
   /// 0–160，100 表示不调整。
   final double brightness;
@@ -91,6 +103,8 @@ class ThemePreset {
     'text': text,
     'link': link,
     'selection': selection,
+    'secondaryBackground': secondaryBackground,
+    'secondaryText': secondaryText,
     'brightness': brightness,
     'contrast': contrast,
     'imageBrightness': imageBrightness,
@@ -111,6 +125,8 @@ class ThemePreset {
     'brightness': brightness,
     'contrast': contrast,
     'imageBrightness': imageBrightness,
+    // 代码块背景：正文色低浓度叠在页面底色上，随主题走。
+    'codeBackground': codeBackground,
     'forceFont': forceFont,
   };
 
@@ -133,8 +149,41 @@ class ThemePreset {
   int get linkArgb =>
       0xFF000000 | (int.tryParse(link.replaceAll('#', ''), radix: 16) ?? 0x5ac8fa);
 
+  int get secondaryBackgroundArgb =>
+      0xFF000000 |
+      (int.tryParse(secondaryBackground.replaceAll('#', ''), radix: 16) ??
+          0x1a1d23);
+
+  int get secondaryTextArgb =>
+      0xFF000000 |
+      (int.tryParse(secondaryText.replaceAll('#', ''), radix: 16) ?? 0xa8b0bc);
+
   int get selectionArgb =>
       0xFF000000 | (int.tryParse(selection.replaceAll('#', ''), radix: 16) ?? 0x2f6f8f);
+
+  /// 代码块背景：正文色以低不透明度叠在页面底色上。
+  ///
+  /// 代码块的**文字和语法高亮完全不动** —— 那是文档的配色信息。
+  /// 但背景必须跟着主题走：站点普遍给代码块设白底，深色页面上
+  /// 留一块白会非常刺眼。
+  ///
+  /// 用叠加而不是写死深色：用户可能建浅色主题，叠加算法两端都对。
+  String get codeBackground {
+    final bgH = background.replaceAll('#', '');
+    final fgH = text.replaceAll('#', '');
+    if (bgH.length != 6 || fgH.length != 6) return 'rgba(255,255,255,0.06)';
+    final br = int.tryParse(bgH.substring(0, 2), radix: 16) ?? 0x14;
+    final bgc = int.tryParse(bgH.substring(2, 4), radix: 16) ?? 0x16;
+    final bb = int.tryParse(bgH.substring(4, 6), radix: 16) ?? 0x1a;
+    final fr = int.tryParse(fgH.substring(0, 2), radix: 16) ?? 0xd8;
+    final fgc = int.tryParse(fgH.substring(2, 4), radix: 16) ?? 0xda;
+    final fb = int.tryParse(fgH.substring(4, 6), radix: 16) ?? 0xde;
+    const a = 0.09;
+    final r = (br * (1 - a) + fr * a).round();
+    final g = (bgc * (1 - a) + fgc * a).round();
+    final b = (bb * (1 - a) + fb * a).round();
+    return 'rgb($r, $g, $b)';
+  }
 
   factory ThemePreset.fromJson(Map<String, dynamic> j) => ThemePreset(
     id: j['id'] as String? ?? 'preset-${DateTime.now().millisecondsSinceEpoch}',
@@ -143,6 +192,8 @@ class ThemePreset {
     text: j['text'] as String? ?? '#d8dade',
     link: j['link'] as String? ?? '#5ac8fa',
     selection: j['selection'] as String? ?? '#2f6f8f',
+    secondaryBackground: j['secondaryBackground'] as String? ?? '#1a1d23',
+    secondaryText: j['secondaryText'] as String? ?? '#a8b0bc',
     brightness: (j['brightness'] as num?)?.toDouble() ?? 100,
     contrast: (j['contrast'] as num?)?.toDouble() ?? 100,
     imageBrightness: (j['imageBrightness'] as num?)?.toDouble() ?? 100,
@@ -156,6 +207,8 @@ class ThemePreset {
     String? text,
     String? link,
     String? selection,
+    String? secondaryBackground,
+    String? secondaryText,
     double? brightness,
     double? contrast,
     double? imageBrightness,
@@ -168,6 +221,8 @@ class ThemePreset {
     text: text ?? this.text,
     link: link ?? this.link,
     selection: selection ?? this.selection,
+    secondaryBackground: secondaryBackground ?? this.secondaryBackground,
+    secondaryText: secondaryText ?? this.secondaryText,
     brightness: brightness ?? this.brightness,
     contrast: contrast ?? this.contrast,
     imageBrightness: imageBrightness ?? this.imageBrightness,

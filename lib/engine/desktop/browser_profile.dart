@@ -68,6 +68,25 @@ class BrowserProfile {
     return null;
   }
 
+  /// 直接找可用的 profile 根，不需要知道浏览器 exe 在哪。
+  ///
+  /// 内嵌 WebView2 之后程序不再启动外部浏览器，只是要把 Cookie 和登录态
+  /// 从用户日常用的浏览器搬过来。所以不需要 exe 路径，按优先级逐个试即可。
+  ///
+  /// 返回找到的第一个可用目录；都没有则 null（独立 profile，未登录）。
+  static Directory? resolveAny() {
+    if (!Platform.isWindows) return null;
+    final local = Platform.environment['LOCALAPPDATA'];
+    if (local == null || local.isEmpty) return null;
+    for (final rel in _candidates) {
+      final dir = Directory(p.join(local, rel));
+      if (!dir.existsSync()) continue;
+      if (defaultProfileName(dir) == null) continue;
+      return dir;
+    }
+    return null;
+  }
+
   /// 找出这个 profile 根下**实际在用**的 profile 名字。
   ///
   /// ── 为什么不能写死 `Default` ──

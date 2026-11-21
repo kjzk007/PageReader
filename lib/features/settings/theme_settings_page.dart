@@ -180,6 +180,8 @@ class _ThemePresetEditPageState extends ConsumerState<ThemePresetEditPage> {
   String _text = '#d8dade';
   String _link = '#5ac8fa';
   String _selection = '#2f6f8f';
+  String _secondaryBackground = '#1a1d23';
+  String _secondaryText = '#a8b0bc';
   double _brightness = 100;
   double _contrast = 100;
   double _imageBrightness = 100;
@@ -205,6 +207,8 @@ class _ThemePresetEditPageState extends ConsumerState<ThemePresetEditPage> {
     _text = p.text;
     _link = p.link;
     _selection = p.selection;
+    _secondaryBackground = p.secondaryBackground;
+    _secondaryText = p.secondaryText;
     _brightness = p.brightness;
     _contrast = p.contrast;
     _imageBrightness = p.imageBrightness;
@@ -263,6 +267,8 @@ class _ThemePresetEditPageState extends ConsumerState<ThemePresetEditPage> {
                       text: _text,
                       link: _link,
                       selection: _selection,
+                      secondaryBackground: _secondaryBackground,
+                      secondaryText: _secondaryText,
                       brightness: _brightness,
                       contrast: _contrast,
                       imageBrightness: _imageBrightness,
@@ -289,6 +295,8 @@ class _ThemePresetEditPageState extends ConsumerState<ThemePresetEditPage> {
             text: _text,
             link: _link,
             selection: _selection,
+            secondaryBackground: _secondaryBackground,
+            secondaryText: _secondaryText,
             brightness: _brightness,
             contrast: _contrast,
             imageBrightness: _imageBrightness,
@@ -306,28 +314,62 @@ class _ThemePresetEditPageState extends ConsumerState<ThemePresetEditPage> {
           ),
           const SizedBox(height: 20),
           const _SectionLabel('颜色'),
-          ThemeColorField(
-            label: '背景色',
-            value: _background,
-            onChanged: (v) => setState(() => _background = v),
-          ),
-          ThemeColorField(
-            label: '文字色',
-            value: _text,
-            onChanged: (v) => setState(() => _text = v),
-          ),
-          ThemeColorField(
-            label: '链接色',
-            value: _link,
-            onChanged: (v) => setState(() => _link = v),
-          ),
-          ThemeColorField(
-            label: '选中色',
-            value: _selection,
-            onChanged: (v) => setState(() => _selection = v),
-          ),
-          const SizedBox(height: 16),
-          const _SectionLabel('亮度'),
+              // 两行 × 三列：一列一行会把六个选择器拉成一条长竖条。
+              Row(
+                children: [
+                  Expanded(
+                    child: ThemeColorField(
+                      label: '背景色',
+                      value: _background,
+                      onChanged: (v) => setState(() => _background = v),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ThemeColorField(
+                      label: '文字色',
+                      value: _text,
+                      onChanged: (v) => setState(() => _text = v),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ThemeColorField(
+                      label: '链接色',
+                      value: _link,
+                      onChanged: (v) => setState(() => _link = v),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: ThemeColorField(
+                      label: '次级背景',
+                      value: _secondaryBackground,
+                      onChanged: (v) => setState(() => _secondaryBackground = v),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ThemeColorField(
+                      label: '次级文字',
+                      value: _secondaryText,
+                      onChanged: (v) => setState(() => _secondaryText = v),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: ThemeColorField(
+                      label: '选中色',
+                      value: _selection,
+                      onChanged: (v) => setState(() => _selection = v),
+                    ),
+                  ),
+                ],
+              ),
           _Slider(
             label: '文字亮度',
             value: _brightness,
@@ -369,7 +411,7 @@ class _ThemePresetEditPageState extends ConsumerState<ThemePresetEditPage> {
   }
 }
 
-/// 预览卡片：把「标题 / 正文 / 链接 / 选中 / 代码块 / 图片」都摆出来。
+/// 预览卡片：把「标题 / 正文 / 链接 / 选中 / 引用 / 列表 / 图片」摆出来。
 ///
 /// 每一项都对应一个可调维度 —— 改哪个参数都能在这里看出差别，
 /// 否则用户调完不知道有没有生效。
@@ -380,6 +422,8 @@ class ThemePreviewCard extends StatelessWidget {
     required this.text,
     required this.link,
     required this.selection,
+    required this.secondaryBackground,
+    required this.secondaryText,
     required this.brightness,
     required this.contrast,
     required this.imageBrightness,
@@ -389,27 +433,74 @@ class ThemePreviewCard extends StatelessWidget {
   final String text;
   final String link;
   final String selection;
+  final String secondaryBackground;
+  final String secondaryText;
   final double brightness;
   final double contrast;
   final double imageBrightness;
 
+  /// 与引擎 adjustTextColor 完全一致的实现。
+  ///
+  /// 亮度：向白/向黑插值，最多吃掉 30% 余量；
+  /// 对比度：以页面底色为基准缩放差值。
+  /// 两者都用插值而不是乘法，避免把接近白的中亮文字顶成纯白。
+  static Color _adjustTextColor(
+    Color fg,
+    Color bg,
+    double brightness,
+    double contrast,
+  ) {
+    var r = fg.r * 255;
+    var g = fg.g * 255;
+    var b = fg.b * 255;
+    final br = bg.r * 255;
+    final bgc = bg.g * 255;
+    final bb = bg.b * 255;
+
+    if (brightness != 100) {
+      final t = (brightness - 100) / 100;
+      final k = t.abs().clamp(0.0, 0.6) * 0.5;
+      if (t > 0) {
+        r = r + (255 - r) * k;
+        g = g + (255 - g) * k;
+        b = b + (255 - b) * k;
+      } else {
+        r *= (1 - k);
+        g *= (1 - k);
+        b *= (1 - k);
+      }
+    }
+
+    if (contrast != 100) {
+      final ct = (contrast - 100) / 100;
+      final cf = 1 + ct.clamp(-0.85, 1.2);
+      r = br + (r - br) * cf;
+      g = bgc + (g - bgc) * cf;
+      b = bb + (b - bb) * cf;
+    }
+
+    return Color.fromARGB(
+      255,
+      r.clamp(0, 255).round(),
+      g.clamp(0, 255).round(),
+      b.clamp(0, 255).round(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bg = ThemeColorField.colorOf(background);
-    // 亮度/对比度用 Color 的反向微调近似：不追求物理精确，
-    // 只要能体现出「拖了滑块预览跟着变」就够。
     final fg = ThemeColorField.colorOf(text);
-    final fgAdjusted = Color.lerp(
-      fg,
-      brightness >= 100 ? Colors.white : Colors.black,
-      ((brightness - 100).abs() / 100) * 0.35,
-    )!;
-    final contrastFactor = (contrast - 100) / 100;
-    final fgFinal = Color.lerp(
-      fgAdjusted,
-      contrastFactor >= 0 ? Colors.white : Colors.grey,
-      contrastFactor.abs() * 0.25,
-    )!;
+    // 必须和引擎的 adjustTextColor 用同一套算法，否则预览和实际对不上 ——
+    // 用户在这里看不出变化，调到页面上才发现完全不同。
+    final fgFinal = _adjustTextColor(fg, bg, brightness, contrast);
+    final subBg = ThemeColorField.colorOf(secondaryBackground);
+    final subText = _adjustTextColor(
+      ThemeColorField.colorOf(secondaryText),
+      bg,
+      brightness,
+      contrast,
+    );
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -492,24 +583,119 @@ class ThemePreviewCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 14),
-          // 代码块：固定用稍亮/稍暗一档的底色，跟正文区分开
+          // 引用块：左侧竖线 + 略降透明度的正文
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(10),
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
             decoration: BoxDecoration(
-              color: Color.lerp(bg, fgFinal, 0.10),
-              borderRadius: BorderRadius.circular(4),
+              color: subBg,
+              border: Border(
+                left: BorderSide(
+                  color: fgFinal.withValues(alpha: 0.35),
+                  width: 3,
+                ),
+              ),
             ),
             child: Text(
-              'for (final p in presets) {\n  print(p.name);\n}',
+              '引用块：这一段用「次级文字」色 —— 说明、页脚、注释都是这个颜色。',
               style: TextStyle(
-                color: fgFinal,
-                fontSize: 12,
-                height: 1.5,
-                fontFamily: 'Consolas',
+                color: subText,
+                fontSize: 13,
+                height: 1.6,
+                fontFamily: 'Microsoft YaHei',
               ),
             ),
           ),
+            const SizedBox(height: 12),
+            // 卡片 + 表格头：都用「次级背景」，这是站点上出现最多的两块
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: subBg,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '表头 A',
+                          style: TextStyle(
+                            color: subText,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'Microsoft YaHei',
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          '表头 B',
+                          style: TextStyle(
+                            color: subText,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'Microsoft YaHei',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Container(
+                      height: 1,
+                      color: fgFinal.withValues(alpha: 0.2),
+                    ),
+                  ),
+                  Text(
+                    '卡片正文：这一块就是「次级背景」色，表格头、侧栏、提示框都用它。',
+                    style: TextStyle(
+                      color: fgFinal,
+                      fontSize: 13,
+                      height: 1.6,
+                      fontFamily: 'Microsoft YaHei',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 12),
+          // 列表：每项前面一个小圆点，看正文色和缩进
+          for (final item in ['列表第一项', '列表第二项'])
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6, right: 8),
+                    child: Container(
+                      width: 5,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: fgFinal,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      item,
+                      style: TextStyle(
+                        color: fgFinal,
+                        fontSize: 13,
+                        height: 1.6,
+                        fontFamily: 'Microsoft YaHei',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           const SizedBox(height: 14),
           // 图片：用一个渐变块模拟照片，亮度滑块直接作用在它上面
           ClipRRect(
