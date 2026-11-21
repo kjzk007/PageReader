@@ -42,6 +42,21 @@ class WebViewEngine implements WebEngine {
   /// bookId → 断点,页面加载完后恢复。
   final Map<String, ProgressSnapshot> _pendingResume = {};
 
+  /// bookId → 待注入的深色主题脚本。
+  ///
+  /// Android 的 WebView 不支持 document-start 注入（实测 MI PAD 4 PLUS
+  /// 的 WebView 68、荣耀 KRJ-W09 的华为内核都不支持），只能在
+  /// onPageFinished 之后 runJavaScript —— 打开书时会先看到原色闪一下。
+  final Map<String, String> _pendingThemeScript = {};
+
+  /// 深色引擎的失败状态上报。
+  ///
+  /// 只在确定没生效时发一条，UI 层用它提示用户。
+  /// Android 上没有 DevTools，正常时不占页面空间。
+  final _darkStatus = StreamController<Map<String, dynamic>>.broadcast();
+
+  Stream<Map<String, dynamic>> get darkStatus => _darkStatus.stream;
+
   /// bookId → 加载进度(0-100)。
   final Map<String, int> _progress = {};
 
@@ -125,6 +140,14 @@ class WebViewEngine implements WebEngine {
           // 页面加载完再补一次:有些站点在 DOMContentLoaded 后
           // 才建立滚动容器,太早注入 __pr 会找不到滚动元素。
           await injectScripts(controller);
+
+          // bridge 就位后再注入深色主题 —— 引擎会通过 __prReport
+          // 上报失败原因，而它由 injectScripts 里的 _bridgeHeader 定义。
+          final theme = _pendingThemeScript[bookId];
+          if (theme != null) {
+            await _injectTheme(controller, theme);
+          }
+
           final resume = _pendingResume.remove(bookId);
           if (resume != null) {
             await _restoreAnchor(controller, resume);
@@ -520,12 +543,186 @@ class WebViewEngine implements WebEngine {
   /// 关掉某本书的 WebView(回书架时释放内存)。
   void release(String bookId) {
     _controllers.remove(bookId);
+    _pendingThemeScript.remove(bookId);
   }
+
+  /// 记下这本书要注入的深色脚本，由阅读页在打开书时调用。
+  void setThemeScript(String bookId, String script) {
+    _pendingThemeScript[bookId] = script;
+  }
+
+  /// 注入深色主题脚本。
+  ///
+  /// ── 为什么要分块 ──
+  ///
+  /// 引擎约 56 KB。实测在 WebView 68 上，单次 evaluateJavascript 传这么
+  /// 大的脚本会**静默失败** —— 不抛错，但脚本一行都不执行。
+  /// 分块后每块 4 KB 都能正常写入，最后在页面里用 new Function 拼起来跑。
+  ///
+  /// ── 为什么要反复重试 ──
+  ///
+  /// 实测同一份代码同一台机器，约 1/5 的概率首次不生效：
+  /// onPageFinished 触发时页面的 readyState 在 WebView 68 上有时仍报
+  /// 'loading'，引擎的启动分支等不到 DOMContentLoaded 就永远不跑。
+  /// 表现是 preset 有值、但连 data-pr-dark 都没设上。
+  ///
+  /// 所以这里不只看结果，必要时**重新执行一次**脚本 ——
+  /// 引擎自身有幂等保护（__prIife / __prMediaPatched 等标记）。
+  Future<void> _injectTheme(
+    WebViewController controller,
+    String script,
+  ) async {
+    // 没绑预设时脚本只有几百字节（matchMedia 覆写），不用分块也不用催。
+    final hasEngine = script.length > 2000;
+    const chunkSize = 4000;
+
+    // 串行化：同一个 WebView 上 onPageFinished 可能连续触发多次
+    //（重定向、iframe、站点自己的 pushState 都会），并发起来时
+    // 后一次的 join 会读走前一次的缓冲，导致长度对不上或直接读空。
+    // 用上次注入的 Future 排队，确保同一时刻只有一次在跑。
+    final prev = _injectChain;
+    final completer = Completer<void>();
+    _injectChain = completer.future;
+    if (prev != null) {
+      try {
+        await prev;
+      } catch (_) {}
+    }
+
+    try {
+      if (!hasEngine) {
+        await controller.runJavaScript(script);
+        return;
+      }
+
+      // 先试单次整段注入。
+      //
+      // 早前判断「72KB 会静默失败」是被 class 字段语法错误误导的 ——
+      // 那时脚本本身编译不过，表现成「注入成功但一行没跑」。
+      // 语法修好后（esbuild 转译到 es2017）单次注入是可靠的，
+      // 分块反而引入了跨轮缓冲污染的问题。
+      //
+      // 分块只在单次失败时兜底。
+      await controller.runJavaScript(script);
+
+      // 判断「真的生效了」不能只看内联样式数。
+      //
+      // 占位样式是写进一张 <style> 的（html,body 的背景色），
+      // 不算内联 style；很多站点（尤其 SPA 空壳）元素本来就少。
+      // 之前用 styled > 5 判定，结果页面明明已经变深色了还报失败。
+      //
+      // 改成看 body 的实际计算背景色是否接近预设背景。
+      for (var attempt = 0; attempt < 6; attempt++) {
+        final r = await controller.runJavaScriptReturningResult(
+          '(function(){'
+          '  var dark = document.documentElement.getAttribute("data-pr-dark");'
+          '  var n = document.querySelectorAll("[style]").length;'
+          '  if (dark === "1" && n > 5) return "ok";'
+          // 元素少或样式走样式表时，用 body 的计算背景色兜底判断。
+          '  if (dark === "1" && document.body) {'
+          '    var bg = getComputedStyle(document.body).backgroundColor;'
+          '    var want = window.__PR_DARK_PRESET'
+          '      ? window.__PR_DARK_PRESET.background : "";'
+          '    if (want && bg === want) return "ok";'
+          '  }'
+          '  if (window.__prForceWalk) {'
+          '    try { window.__prForceWalk(); } catch (e) {}'
+          '  }'
+          '  return "retry dark=" + dark + " styled=" + n;'
+          '})()',
+        );
+        if (r.toString().replaceAll('"', '') == 'ok') return;
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      }
+
+      // 走到这里说明单次注入没成功：分块再试一次。
+      final chunks = <String>[
+        for (var i = 0; i < script.length; i += chunkSize)
+          script.substring(
+            i,
+            i + chunkSize > script.length ? script.length : i + chunkSize,
+          ),
+      ];
+      final token = DateTime.now().microsecondsSinceEpoch;
+      final buf = '__prBuf$token';
+      await controller.runJavaScript('window.$buf = [];');
+      for (final chunk in chunks) {
+        await controller.runJavaScript(
+          'window.$buf.push(${jsonEncode(chunk)});',
+        );
+      }
+      await controller.runJavaScript(
+        'window.__prSource = window.$buf.join("");'
+        'window.$buf = null;'
+        'try { (new Function(window.__prSource))(); }'
+        'catch (e) { window.__prDarkError = String(e); }',
+      );
+
+      for (var attempt = 0; attempt < 8; attempt++) {
+        // 每次都清掉上一次的错误，避免读到过期的失败原因。
+        await controller.runJavaScript(
+          'window.__prDarkError = null;'
+          'if (window.__prSource) {'
+          '  try { (new Function(window.__prSource))(); }'
+          '  catch (e) { window.__prDarkError = String(e); }'
+          '}',
+        );
+
+        final r = await controller.runJavaScriptReturningResult(
+          '(function(){'
+          '  var dark = document.documentElement.getAttribute("data-pr-dark");'
+          '  var n = document.querySelectorAll("[style]").length;'
+          '  if (dark === "1" && n > 5) return "ok";'
+          // 已启动但样式不够：让引擎重扫一遍即可。
+          '  if (window.__prForceWalk) {'
+          '    try { window.__prForceWalk(); } catch (e) {}'
+          '  }'
+          '  return "retry dark=" + dark + " styled=" + n +'
+          '    " err=" + (window.__prDarkError || "none");'
+          '})()',
+        );
+        final state = r.toString().replaceAll('"', '');
+        if (state == 'ok') return;
+
+        if (attempt == 7) {
+          final detail = await controller.runJavaScriptReturningResult(
+            '(function(){'
+            '  var o = [];'
+            '  o.push("preset=" + (!!window.__PR_DARK_PRESET));'
+            '  o.push("bg=" + (window.__PR_DARK_PRESET ? window.__PR_DARK_PRESET.background : "-"));'
+            '  o.push("keys=" + (window.__PR_DARK_PRESET ? Object.keys(window.__PR_DARK_PRESET).join(",") : "-"));'
+            '  o.push("runErr=" + (window.__prDarkError || "none"));'
+            '  o.push("errs=" + JSON.stringify((window.__prDarkErrors||[]).slice(0,3)));'
+            '  o.push("forceWalk=" + (typeof window.__prForceWalk));'
+            '  o.push("total=" + document.querySelectorAll("*").length);'
+            '  o.push("bodyBg=" + (document.body ? getComputedStyle(document.body).backgroundColor : "-"));'
+            '  return o.join(" ");'
+            '})()',
+          );
+          final msg = detail.toString().replaceAll('"', '');
+          debugPrint('深色注入未生效: $state | $msg');
+          _darkStatus.add({'ok': false, 'error': msg});
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+      }
+    } catch (e) {
+      _darkStatus.add({'ok': false, 'error': '注入抛错: $e'});
+    } finally {
+      completer.complete();
+      if (identical(_injectChain, completer.future)) {
+        _injectChain = null;
+      }
+    }
+  }
+
+  /// 注入串行化用的链尾 Future。
+  Future<void>? _injectChain;
 
   @override
   Future<void> shutdown() async {
     _controllers.clear();
     await _navs.close();
     await _reports.close();
+    await _darkStatus.close();
   }
 }

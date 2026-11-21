@@ -7,7 +7,9 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../../core/domain/models.dart';
 import '../../core/services/settings.dart';
 import '../../core/services/webview_theme.dart';
+import '../../engine/android/android_theme_script.dart';
 import '../../engine/android/webview_engine.dart';
+import 'dark_status_badge.dart';
 
 /// Android 阅读页。
 ///
@@ -44,10 +46,26 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
     with WidgetsBindingObserver {
   WebViewController? _controller;
 
+  /// 深色引擎上报的执行状态（null 表示还没收到）。
+  Map<String, dynamic>? _darkReport;
+  // ignore: unused_field
+  StreamSubscription<Map<String, dynamic>>? _darkSub;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    // 订阅深色引擎的执行状态。
+    //
+    // 引擎注入后会自报一条 why=dark-status 的消息。Android 上没有
+    // DevTools，不订阅就只能靠猜 —— 页面没变色时不知道是没注入、
+    // 注入了但语法错误、还是注入了但没找到可算色的元素。
+    _darkSub = widget.engine.darkStatus.listen((s) {
+      if (!mounted) return;
+      setState(() => _darkReport = s);
+    });
+
 
     // 双指横滑由页面内的 JS 检测后回传。
     //
@@ -106,8 +124,30 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
       mode,
       MediaQuery.platformBrightnessOf(context),
     );
-    await WebViewTheme.apply(c.platform, dark: dark);
+    // 拼出本次要注入的脚本：预设 + 引擎全文。
+    //
+    // 没选预设时只做 matchMedia 覆写（让站点自己切深色）；
+    // 选了预设才注入完整引擎 —— 这是「默认」档的语义。
+    final preset = ref
+        .read(themePresetsProvider.notifier)
+        .byId(widget.book.presetId);
+    final cap = await WebViewTheme.probe();
+    final script = await AndroidThemeScript.build(
+      preset: preset,
+      dark: dark,
+      webViewVersion: cap.webViewVersion,
+    );
 
+    // 实测 MI PAD 4 PLUS(WebView 68)和荣耀 KRJ-W09(华为内核)都不支持
+    // document-start 注入。这两台上主题设置仍能用，只是打开书时会先
+    // 看到原色闪一下 —— 这是设备的硬限制，不是实现没做好。
+    final injected = await WebViewTheme.applyScript(
+      c.platform,
+      script: script,
+    );
+    if (!injected) {
+      widget.engine.setThemeScript(widget.book.id, script);
+    }
     if (!mounted) return;
     setState(() => _controller = c);
 
@@ -146,18 +186,29 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
     // 当前已加载的页面不会变。这里刻意不主动 reload ——
     // 用户可能正在读,突然刷新比配色暂时不更新更糟。
     // 下次翻页/重开书时就会用新主题。
-    ref.listen(themeModeProvider, (prev, next) {
+    ref.listen(themeModeProvider, (prev, next) async {
       final c = _controller;
       if (c == null) return;
-      unawaited(
-        WebViewTheme.apply(
-          c.platform,
-          dark: WebViewTheme.resolveDark(
-            next,
-            MediaQuery.platformBrightnessOf(context),
-          ),
-        ),
+      final dark = WebViewTheme.resolveDark(
+        next,
+        MediaQuery.platformBrightnessOf(context),
       );
+      // 重新拼脚本并注册。document-start 脚本只对之后创建的文档生效，
+      // 当前页面不会立刻变 —— 这是刻意的：用户可能正在读，
+      // 突然刷新比配色暂时不更新更糟。下次翻页或重开书时生效。
+      final preset = ref
+          .read(themePresetsProvider.notifier)
+          .byId(widget.book.presetId);
+      final cap = await WebViewTheme.probe();
+      final script = await AndroidThemeScript.build(
+        preset: preset,
+        dark: dark,
+        webViewVersion: cap.webViewVersion,
+      );
+      final ok = await WebViewTheme.applyScript(c.platform, script: script);
+      if (!ok) {
+        widget.engine.setThemeScript(widget.book.id, script);
+      }
     });
 
     return PopScope(
@@ -170,14 +221,30 @@ class _ReaderPageState extends ConsumerState<ReaderPage>
       child: Scaffold(
         backgroundColor: const Color(0xFF0E0F12),
         body: SafeArea(
-          child: _controller == null
-              ? const Center(
+          child: Stack(
+            children: [
+              if (_controller == null)
+                const Center(
                   child: CircularProgressIndicator(
                     color: Color(0xFF5AC8FA),
                     strokeWidth: 2,
                   ),
                 )
-              : WebViewWidget(controller: _controller!),
+              else
+                WebViewWidget(controller: _controller!),
+              // 深色引擎状态条：浮在页面顶部，能看见注入结果。
+              //
+              // 这是 Android 上唯一的排查手段 —— 没有 DevTools，
+              // 出问题时只能靠这条信息判断「注入成功没有、有没有 JS 错误」。
+              if (_darkReport != null)
+                Positioned(
+                  left: 8,
+                  right: 8,
+                  top: 8,
+                  child: DarkStatusBadge(report: _darkReport!),
+                ),
+            ],
+          ),
         ),
       ),
     );

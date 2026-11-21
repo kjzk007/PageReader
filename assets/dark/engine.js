@@ -2201,7 +2201,12 @@
       flushing = false;
     }
     if (pending.length) {
-      requestAnimationFrame(flush);
+      // 用 setTimeout 而不是 requestAnimationFrame。
+      //
+      // 实测：Android WebView（Flutter PlatformView 内）里 rAF 会因为
+      // 页面不可见或合成原因**不触发**，队列堆积的元素永远不处理。
+      // 表现是 SPA 站点只改了初始几个元素，正文全是原色。
+      setTimeout(flush, 16);
     }
   }
 
@@ -2249,7 +2254,8 @@
           enqueue(m.target);
         }
       }
-      if (pending.length) requestAnimationFrame(flush);
+      // 同上：rAF 在 WebView 里可能不触发。
+      if (pending.length) setTimeout(flush, 0);
     });
     mo.observe(document.documentElement, {
       childList: true,
@@ -2262,6 +2268,17 @@
 
   // ===== 启动 =====
   function start() {
+    // 重扫接口：注入后若没立刻生效，宿主会调它补算一遍。
+    //
+    // SPA 站点在注入时 DOM 可能还是空的（实测某站点初始 6 个节点、
+    // 2 秒后 210 个）。光靠页面内的 MutationObserver 不可靠 ——
+    // 老 WebView 上观察器行为不一致，队列堆了 200 多个元素也不处理。
+    // 由 Dart 侧主动催一遍最稳。
+    window.__prForceWalk = function () {
+      if (!document.body) return 'no-body';
+      walk(document.body);
+      return 'ok';
+    };
     applyPlaceholder();
     applyUserOverrides();
     if (THEME.useFont && THEME.fontFamily) {
@@ -2279,12 +2296,36 @@
       processed = new WeakSet();
       walk(document.body || document.documentElement);
     }, { once: true });
+
+    // 定时补偿：SPA 站点在 DOMContentLoaded 时可能只有几个节点，
+    // 后面才陆续渲染。这里在前 6 秒内定期重扫兜底，
+    // 之后停止 —— 不能长期占用定时器影响滚动性能。
+    var rescans = 0;
+    var rescanTimer = setInterval(function () {
+      rescans++;
+      if (rescans > 12) {
+        clearInterval(rescanTimer);
+        return;
+      }
+      walk(document.body || document.documentElement);
+    }, 500);
   }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start, { once: true });
     // DOM 还没解析完也要先顶住背景
     applyPlaceholder();
+    // 兜底：注入发生在 onPageFinished 之后，此时 readyState 有可能
+    // 仍报 'loading'（WebView 68 上实测过），那样 DOMContentLoaded
+    // 早就触发过了，监听器永远不会被调用 —— 表现就是 preset 有值、
+    // 但引擎一步都没跑，连 data-pr-dark 都没设上。
+    //
+    // 300ms 后再看一眼：还没标记就说明确实错过了，直接 start。
+    setTimeout(function () {
+      if (document.documentElement.getAttribute('data-pr-dark') !== '1') {
+        start();
+      }
+    }, 300);
   } else {
     start();
   }

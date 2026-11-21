@@ -58,10 +58,31 @@ try {
   process.env.PR_DARK_BODY = files.body;
   run('_merge.js');
 
-  console.log('  4/4 拼装');
+  console.log('  4/5 拼装');
   process.env.PR_DARK_BODY = files.body;
-  process.env.PR_DARK_OUT = path.join(projectRoot, 'assets', 'dark', 'engine.js');
+  const engineJs = path.join(projectRoot, 'assets', 'dark', 'engine.js');
+  process.env.PR_DARK_OUT = engineJs;
   run('_build_engine.js');
+
+  // ── 5/5 生成安卓降级版 ──
+  //
+  // 安卓老设备（MI PAD 4 PLUS 是 WebView 68）跑不动新语法。
+  // 实测踩过的坑：引擎里有 class 字段（ES2022），WebView 68 直接
+  // 解析失败 —— 而且 evaluateJavascript 不报解析错误，表现为
+  // 「脚本注入成功但页面一点变化都没有」，极难排查。
+  //
+  // esbuild 转译到 es2017 能降掉所有 WebView 68 不支持的东西。
+  // 不用自己写降级规则：以前手写的 lower_syntax.js 只处理了
+  // ?. / ?? / replaceAll，漏了 class 字段，正是那次踩坑的原因。
+  console.log('  5/5 生成安卓降级版 (es2017)');
+  const legacyJs = path.join(projectRoot, 'assets', 'dark', 'engine.legacy.js');
+  execFileSync(
+    'npx',
+    ['--yes', 'esbuild', engineJs, '--target=es2017', '--outfile=' + legacyJs],
+    { encoding: 'utf8', stdio: 'inherit', shell: true },
+  );
+  const legacySize = (fs.statSync(legacyJs).size / 1024).toFixed(1);
+  console.log('    engine.legacy.js  ' + legacySize + ' KB');
 } finally {
   // 无论成败都清理临时目录
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}

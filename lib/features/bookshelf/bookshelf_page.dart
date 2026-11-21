@@ -838,7 +838,13 @@ class _BookshelfPageState extends State<BookshelfPage> {
           updatedAt: DateTime.now(),
         ),
       );
+      // 临时诊断：确认写入的 presetId，以及重新加载后读回来的值。
+      debugPrint('PRSAVE picked=$picked isDefault=$isDefault');
       await _reload();
+      final reloaded = (await widget.store.loadBooks())
+          .where((b) => b.id == book.id)
+          .firstOrNull;
+      debugPrint('PRSAVE reloaded presetId=${reloaded?.presetId}');
       if (!mounted) return;
       _toast(isDefault ? '已改为默认' : '已应用主题');
       return;

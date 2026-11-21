@@ -78,14 +78,39 @@ class MainActivity : FlutterActivity() {
                         ),
                     )
                 }
-                "setThemeMode" -> {
-                    val enabled = call.argument<Boolean>("dark") ?: false
+                // 报出实际用的 WebView 包名和版本。
+                //
+                // 用户拿到 APK 要能自己判断「我这台行不行」——
+                // 光说支持/不支持没用，得知道底下的 WebView 是哪版。
+                // 不支持时也能据此建议他去更新 Android System WebView。
+                "webViewPackage" -> {
+                    try {
+                        val info = android.webkit.WebView.getCurrentWebViewPackage()
+                        result.success(
+                            mapOf(
+                                "package" to (info?.packageName ?: ""),
+                                "version" to (info?.versionName ?: ""),
+                            ),
+                        )
+                    } catch (e: Throwable) {
+                        result.success(mapOf("package" to "", "version" to ""))
+                    }
+                }
+                // 挂上任意脚本。
+                //
+                // 和旧的 setThemeMode 相比，这里不再在原生侧生成脚本内容 ——
+                // 主题预设、引擎全文都由 Dart 拼好后传进来。原生只负责
+                // 「在文档开始前把它执行掉」这一件事。
+                "addScript" -> {
+                    val script = call.argument<String>("script")
                     val id = call.argument<Number>("webViewId")?.toLong()
-                    if (id == null) {
-                        result.error("no_id", "缺少 webViewId", null)
+                    if (id == null || script == null) {
+                        result.error("bad_args", "缺少 webViewId 或 script", null)
                         return@setMethodCallHandler
                     }
-                    result.success(applyDocumentStart(flutterEngine, id, enabled))
+                    result.success(
+                        applyDocumentStartScript(flutterEngine, id, script),
+                    )
                 }
                 else -> result.notImplemented()
             }
@@ -97,10 +122,10 @@ class MainActivity : FlutterActivity() {
      *
      * @return 是否注册成功
      */
-    private fun applyDocumentStart(
+    private fun applyDocumentStartScript(
         engine: FlutterEngine,
         webViewId: Long,
-        dark: Boolean,
+        script: String,
     ): Boolean {
         if (!WebViewFeature.isFeatureSupported(
                 WebViewFeature.DOCUMENT_START_SCRIPT,
@@ -128,14 +153,13 @@ class MainActivity : FlutterActivity() {
                 runCatching { old.remove() }
             }
 
-            val script = buildScript(dark)
             val handler = WebViewCompat.addDocumentStartJavaScript(
                 wv,
                 script,
                 setOf("*"),
             )
             registered[webViewId] = handler
-            Log.i(TAG, "已注册文档开始前脚本 dark=$dark (id=$webViewId)")
+            Log.i(TAG, "已注册文档开始前脚本 ${script.length} 字符 (id=$webViewId)")
             true
         } catch (e: Exception) {
             Log.e(TAG, "注册失败", e)
@@ -143,37 +167,6 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /**
-     * 文档开始前执行的脚本。
-     *
-     * 只覆写 matchMedia —— 站点会自己根据结果挑主题,
-     * 我们不该改它的 DOM(那会导致两边互相覆盖、深浅闪烁)。
-     */
-    private fun buildScript(dark: Boolean): String {
-        val value = if (dark) "true" else "false"
-        return """
-(function () {
-  if (window.__prDocStartPatched) return;
-  window.__prDocStartPatched = true;
-  try {
-    var orig = window.matchMedia.bind(window);
-    window.matchMedia = function (query) {
-      var mql = orig(query);
-      if (!query || query.indexOf('prefers-color-scheme') < 0) return mql;
-      var askDark = query.indexOf('dark') >= 0;
-      var askLight = query.indexOf('light') >= 0;
-      if (!askDark && !askLight) return mql;
-      try {
-        Object.defineProperty(mql, 'matches', {
-          get: function () { return askDark ? $value : ${if (dark) "false" else "true"}; }
-        });
-      } catch (e) {}
-      return mql;
-    };
-  } catch (e) {}
-})();
-        """.trimIndent()
-    }
 
     companion object {
         private const val CHANNEL = "com.pagereader/theme"

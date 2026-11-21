@@ -1,9 +1,11 @@
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/services/settings.dart';
 import 'theme_settings_page.dart';
+import 'injection_capability_section.dart';
 import 'extension_section.dart';
 
 /// 设置页。
@@ -57,9 +59,16 @@ class SettingsPage extends ConsumerWidget {
           const SizedBox(height: 28),
           _sectionTitle('主题设置'),
           _ThemeEntry(),
+          // Android 才有「注入能力」这回事：桌面端 WebView2 天然支持
+          // document-start，不需要检测，也不存在闪不闪的差别。
+          if (Platform.isAndroid) ...[
+            const SizedBox(height: 8),
+            const InjectionCapabilitySection(),
+          ],
           const SizedBox(height: 28),
           _sectionTitle('浏览器插件'),
           const ExtensionSection(),
+
           _sectionTitle('关于'),
           const _About(),
         ],

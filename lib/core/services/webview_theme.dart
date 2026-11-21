@@ -45,21 +45,60 @@ class WebViewTheme {
     }
   }
 
-  /// 给指定 WebView 注册文档开始前脚本。
+  /// 一次完整的注入能力体检，供设置页展示。
   ///
-  /// [dark] 决定向站点报告 dark 还是 light。
-  /// 返回是否注册成功;失败时页面会保持站点默认主题(通常是浅色)。
-  static Future<bool> apply(
+  /// 光知道「支持/不支持」不够 —— 用户拿到 APK 之后要能自己判断
+  /// 「我这款手机到底行不行」，所以连 WebView 版本一起报出来。
+  static Future<InjectionCapability> probe() async {
+    if (!Platform.isAndroid) {
+      return const InjectionCapability(
+        isAndroid: false,
+        documentStart: false,
+        webViewPackage: '',
+        webViewVersion: '',
+      );
+    }
+    var supported = false;
+    try {
+      supported =
+          await _channel.invokeMethod<bool>('isDocumentStartSupported') ??
+          false;
+    } catch (_) {}
+
+    var pkg = '';
+    var ver = '';
+    try {
+      final info = await _channel.invokeMethod<Map<Object?, Object?>>(
+        'webViewPackage',
+      );
+      pkg = (info?['package'] as String?) ?? '';
+      ver = (info?['version'] as String?) ?? '';
+    } catch (_) {}
+
+    return InjectionCapability(
+      isAndroid: true,
+      documentStart: supported,
+      webViewPackage: pkg,
+      webViewVersion: ver,
+    );
+  }
+
+  /// 给指定 WebView 注册「文档开始前执行」的脚本。
+  ///
+  /// [script] 由调用方拼好（预设 + 引擎全文），原生侧只负责执行时机。
+  /// 返回是否注册成功；false 表示这台设备不支持 document-start，
+  /// 调用方应该退回「页面加载完再注入」。
+  static Future<bool> applyScript(
     PlatformWebViewController controller, {
-    required bool dark,
+    required String script,
   }) async {
     if (!Platform.isAndroid) return false;
     if (controller is! AndroidWebViewController) return false;
     try {
       final id = controller.webViewIdentifier;
-      return await _channel.invokeMethod<bool>('setThemeMode', {
+      return await _channel.invokeMethod<bool>('addScript', {
             'webViewId': id,
-            'dark': dark,
+            'script': script,
           }) ??
           false;
     } catch (_) {
@@ -79,5 +118,35 @@ class WebViewTheme {
       case ThemeMode.system:
         return platformBrightness == Brightness.dark;
     }
+  }
+}
+
+/// 注入能力体检结果。
+class InjectionCapability {
+  const InjectionCapability({
+    required this.isAndroid,
+    required this.documentStart,
+    required this.webViewPackage,
+    required this.webViewVersion,
+  });
+
+  final bool isAndroid;
+
+  /// 是否支持在文档开始前注入脚本。
+  ///
+  /// 支持 → 深色主题在第一帧就生效，不闪。
+  /// 不支持 → 只能等页面加载完再注入，会先看到原色闪一下。
+  final bool documentStart;
+
+  final String webViewPackage;
+  final String webViewVersion;
+
+  /// 给用户看的一句话结论。
+  String get summary {
+    if (!isAndroid) return '仅 Android 需要此项检查';
+    if (documentStart) {
+      return '支持 document-start 注入 —— 主题设置会立即生效，不闪';
+    }
+    return '不支持 document-start 注入 —— 主题设置会先闪一下原色再生效';
   }
 }

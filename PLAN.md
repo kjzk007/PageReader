@@ -154,17 +154,51 @@
 
 ## 四、已知限制（不做）
 
-### Android 不支持主题预设
+### Android 主题预设已接入（2026-11-21）
 
-**现状**：Android 用系统 ForceDark + 覆写 `matchMedia` 让站点自己切深色，
-和桌面端的自研引擎是两套东西。
+**现状**：六个颜色维度在 Android 上也生效，和桌面端跑同一份引擎。
 
-**为什么不接**：桌面端靠 `AddScriptToExecuteOnDocumentCreated`
-在 `document_start` 注入（第一帧之前），Android 的 `runJavaScript`
-只能在页面加载后跑 —— 深色要等渲染完才应用，会看到白闪。
-这是结构性差距，不是实现细节。
+**和桌面端的唯一差别是闪不闪**：桌面端用 `AddScriptToExecuteOnDocumentCreated`
+在 `document_start` 注入（第一帧之前）；Android 只能等 `onPageFinished`
+之后 `runJavaScript`，所以打开书时会先看到原色闪一下。
 
-**决定**：不做。
+实测两台设备都不支持 `DOCUMENT_START_SCRIPT`：
+- MI PAD 4 PLUS：WebView 68.0.3440.91
+- 荣耀 KRJ-W09：`com.huawei.webview` 11.1.5.315（华为自家内核）
+
+所以闪这一下是**当前设备的硬限制**，不是实现没做好。将来设备升级
+WebView 支持 document-start 后，改注入时机即可消除。
+
+**踩过的坑（重要）**：
+
+1. **引擎里的 class 字段在 WebView 68 上解析失败**
+   - 现象：注入成功、不抛错，但脚本一行都不执行 —— 连第一行的
+     `window.__PR_DARK_PRESET` 都没赋值。`evaluateJavascript` 不上报
+     解析错误，所以看起来像「注入成功但没效果」。
+   - 解决：构建时用 esbuild 转译到 es2017，产出 `engine.legacy.js`。
+     运行时按 WebView 主版本挑一个（< 85 用降级版）。
+   - 教训：**不要手写降级规则**。早前写的 `lower_syntax.js` 只处理了
+     `?.` / `??` / `replaceAll`，漏了 class 字段 —— 正是那次踩的坑。
+
+2. **`requestAnimationFrame` 在 WebView 里可能不触发**
+   - 现象：SPA 站点只改了初始几个元素，正文全是原色，而队列里明明
+     堆着 200 多个待处理节点。
+   - 原因：Flutter PlatformView 内的 WebView，页面不可见或合成原因
+     会让 rAF 不执行。
+   - 解决：批量调度改用 `setTimeout`。
+
+3. **注入时机不确定，需要重试**
+   - 现象：同一份代码同一台机器，约 1/5 概率首次不生效。
+   - 原因：`onPageFinished` 时 `readyState` 在 WebView 68 上有时仍报
+     `loading`，引擎的启动分支等不到 `DOMContentLoaded` 就永远不跑。
+   - 解决：骨架里加 300ms 兜底（还没标记就直接 `start()`），
+     Dart 侧加 6 次重试 + 引擎暴露 `__prForceWalk` 供宿主主动补算。
+
+4. **分块注入是个弯路**
+   - 早前误判「72KB 单次注入会静默失败」，于是改成分块 + `new Function`，
+     结果引入跨轮缓冲污染（长度从 58k 涨到 86k，报 SyntaxError 位置乱跳）。
+   - 真相：那个「静默失败」是第 1 条的 class 字段语法错误造成的。
+   - 现在：**优先单次整段注入**，失败才用带唯一 token 缓冲的分块兜底。
 
 ### 次级背景需要用户自己配成同色系
 
